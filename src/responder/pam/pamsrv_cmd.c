@@ -300,6 +300,49 @@ static errno_t get_password_for_cache_auth(struct sss_auth_token *authtok,
     return EOK;
 }
 
+static errno_t add_warning_about_expiration(struct pam_data *pd,
+                                            struct confdb_ctx *cdb)
+{
+    char* pam_account_expired_message;
+    int pam_verbosity;
+    errno_t ret;
+
+    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,
+                         CONFDB_PAM_VERBOSITY, DEFAULT_PAM_VERBOSITY,
+                         &pam_verbosity);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to read PAM verbosity, not fatal.\n");
+        pam_verbosity = DEFAULT_PAM_VERBOSITY;
+    }
+
+    /* Account expiration warning is printed for sshd. If pam_verbosity
+     * is equal or above PAM_VERBOSITY_INFO then all services are informed
+     * about account expiration.
+     */
+    if (pd->pam_status == PAM_ACCT_EXPIRED &&
+        ((pd->service != NULL && strcasecmp(pd->service, "sshd") == 0) ||
+         pam_verbosity >= PAM_VERBOSITY_INFO)) {
+
+        ret = confdb_get_string(cdb, pd, CONFDB_PAM_CONF_ENTRY,
+                                CONFDB_PAM_ACCOUNT_EXPIRED_MESSAGE, "",
+                                &pam_account_expired_message);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Failed to get expiration message: %d:[%s].\n",
+                  ret, sss_strerror(ret));
+            goto done;
+        }
+
+        inform_account_expired(pd, pam_account_expired_message);
+    }
+
+    ret = EOK;
+
+done:
+    return ret;
+}
+
 static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd);
 static void pam_handle_cached_login(struct pam_auth_req *preq, int ret,
                                     time_t expire_date, time_t delayed_until, bool cached_auth);
@@ -321,21 +364,10 @@ static void pam_reply(struct pam_auth_req *preq)
     uint32_t user_info_type;
     time_t exp_date = -1;
     time_t delay_until = -1;
-    char* pam_account_expired_message;
-    int pam_verbosity;
 
     pd = preq->pd;
     cctx = preq->cctx;
     pctx = talloc_get_type(preq->cctx->rctx->pvt_ctx, struct pam_ctx);
-
-    ret = confdb_get_int(pctx->rctx->cdb, CONFDB_PAM_CONF_ENTRY,
-                         CONFDB_PAM_VERBOSITY, DEFAULT_PAM_VERBOSITY,
-                         &pam_verbosity);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to read PAM verbosity, not fatal.\n");
-        pam_verbosity = DEFAULT_PAM_VERBOSITY;
-    }
 
     DEBUG(SSSDBG_FUNC_DATA,
           "pam_reply called with result [%d]: %s.\n",
@@ -459,31 +491,17 @@ static void pam_reply(struct pam_auth_req *preq)
         return;
     }
 
+    ret = add_warning_about_expiration(pd, pctx->rctx->cdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "warn_about_expiration failed: %d:[%s]\n",
+              ret, sss_strerror(ret));
+        goto done;
+    }
+
     ret = sss_packet_new(cctx->creq, 0, sss_packet_get_cmd(cctx->creq->in),
                          &cctx->creq->out);
     if (ret != EOK) {
         goto done;
-    }
-
-    /* Account expiration warning is printed for sshd. If pam_verbosity
-     * is equal or above PAM_VERBOSITY_INFO then all services are informed
-     * about account expiration.
-     */
-    if (pd->pam_status == PAM_ACCT_EXPIRED &&
-        ((pd->service != NULL && strcasecmp(pd->service, "sshd") == 0) ||
-         pam_verbosity >= PAM_VERBOSITY_INFO)) {
-
-        ret = confdb_get_string(pctx->rctx->cdb, pd, CONFDB_PAM_CONF_ENTRY,
-                                CONFDB_PAM_ACCOUNT_EXPIRED_MESSAGE, "",
-                                &pam_account_expired_message);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Failed to get expiration message: %d:[%s].\n",
-                  ret, sss_strerror(ret));
-            goto done;
-        }
-
-        inform_account_expired(pd, pam_account_expired_message);
     }
 
     ret = filter_responses(pctx->rctx->cdb, pd->resp_list);
