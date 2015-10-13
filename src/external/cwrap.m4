@@ -28,3 +28,21 @@ AC_DEFUN([AM_CHECK_NSS_WRAPPER],
 [
     AM_CHECK_WRAPPER(nss_wrapper, HAVE_NSS_WRAPPER)
 ])
+
+AC_DEFUN([AM_CHECK_PAM_WRAPPER],
+[
+    AM_CHECK_WRAPPER(pam_wrapper, HAVE_PAM_WRAPPER)
+])
+
+dnl A macro to check presence of cmocka on the system
+AC_DEFUN([AM_CHECK_LIBPAMTEST],
+[
+    have_libpamtest="no"
+    PKG_CHECK_EXISTS(libpamtest,
+        dnl PKG_CHECK_EXISTS ACTION-IF-FOUND
+        [PKG_CHECK_MODULES([PAMTEST], [libpamtest], [have_libpamtest="yes"])],
+        dnl PKG_CHECK_EXISTS ACTION-IF-NOT-FOUND
+        [AC_MSG_WARN([No libpamtest library found, some tests will not be built])]
+    )
+    AM_CONDITIONAL([HAVE_LIBPAMTEST], [test x$have_libpamtest = xyes])
+])

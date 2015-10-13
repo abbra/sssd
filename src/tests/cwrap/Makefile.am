@@ -53,9 +53,19 @@ check_PROGRAMS += \
     $(NULL)
 endif # HAVE_UID_WRAPPER
 endif # HAVE_NSS_WRAPPER
+
+if HAVE_PAM_WRAPPER
+if HAVE_LIBPAMTEST
+check_PROGRAMS += \
+    pam_sss_wrapper-tests \
+    $(NULL)
+endif # HAVE_LIBPAMTEST
+endif # HAVE_PAM_WRAPPER
+
 endif # HAVE_CMOCKA
 
-TESTS = $(check_PROGRAMS)
+TESTS = $(check_PROGRAMS) \
+        $(NULL)
 
 become_user_tests_SOURCES = \
     test_become_user.c \
@@ -164,6 +174,22 @@ responder_common_tests_LDADD = \
     $(abs_top_builddir)/libsss_util.la \
     $(abs_top_builddir)/libsss_debug.la \
     $(abs_top_builddir)/libsss_crypt.la \
+    $(abs_top_builddir)/libsss_test_common.la \
+    $(NULL)
+
+pam_sss_wrapper_tests_SOURCES = \
+    test_wrapper_pam_sss.c \
+    $(NULL)
+pam_sss_wrapper_tests_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+pam_sss_wrapper_tests_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(TALLOC_LIBS) \
+    $(POPT_LIBS) \
+    $(PAM_LIBS) \
+    $(PAMTEST_LIBS) \
+    $(abs_top_builddir)/libsss_debug.la \
     $(abs_top_builddir)/libsss_test_common.la \
     $(NULL)
 

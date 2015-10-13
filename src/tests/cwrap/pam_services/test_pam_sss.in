@@ -1,0 +1,4 @@
+auth            required        @abs_top_builddir@/.libs/pam_test_sss.so
+account         required        @abs_top_builddir@/.libs/pam_test_sss.so
+password        required        @abs_top_builddir@/.libs/pam_test_sss.so
+session         required        @abs_top_builddir@/.libs/pam_test_sss.so

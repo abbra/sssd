@@ -1772,7 +1772,7 @@ responder_socket_access_tests_LDADD = \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la
-endif
+endif	# HAVE_CHECK
 
 stress_tests_SOURCES = \
     src/tests/stress-tests.c
@@ -2729,6 +2729,40 @@ pam_sss_la_LDFLAGS = \
     -avoid-version \
     -Wl,--version-script,$(srcdir)/src/sss_client/sss_pam.exports
 
+if HAVE_PAM_WRAPPER
+if HAVE_LIBPAMTEST
+check_LTLIBRARIES += \
+    pam_test_sss.la \
+    $(NULL)
+
+cwrap_test_modules = pam_test_sss.la
+endif # HAVE_LIBPAMTEST
+endif # HAVE_PAM_WRAPPER
+
+pam_test_sss_la_SOURCES = \
+    $(pam_sss_la_SOURCES) \
+    src/tests/cwrap/mock_pam_responder.c \
+    src/responder/common/responder_packet.c \
+    src/responder/pam/pamsrv_extract.c \
+    src/responder/pam/pamsrv_reply.c \
+    src/responder/pam/pamsrv_p11.c \
+    $(NULL)
+pam_test_sss_la_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+pam_test_sss_la_LIBADD = \
+    $(pam_sss_la_LIBADD) \
+    libsss_debug.la \
+    libsss_util.la \
+    $(NULL)
+pam_test_sss_la_LDFLAGS = \
+    $(pam_sss_la_LDFLAGS) \
+    -rpath /nowhere \
+    -Wl,-wrap,sss_pam_make_request \
+    -Wl,-wrap,sss_packet_get_body \
+    -Wl,-wrap,sss_parse_name_for_domains \
+    $(NULL)
+
 if BUILD_SUDO
 
 libsss_sudo_la_SOURCES = \
@@ -3643,7 +3677,7 @@ endif
 
 CLEANFILES = *.X */*.X */*/*.X
 
-tests: all $(check_PROGRAMS)
+tests: all $(check_PROGRAMS) $(cwrap_test_modules)
 	(cd src/tests/cwrap && $(MAKE) $(AM_MAKEFLAGS) $@) || exit 1;
 
 

@@ -5,6 +5,7 @@ pkg-config --exists uid_wrapper || exit 1
 
 nss_wrapper=$(pkg-config --libs nss_wrapper)
 uid_wrapper=$(pkg-config --libs uid_wrapper)
+pam_wrapper=$(pkg-config --libs pam_wrapper)
 if [ -z $nss_wrapper -o -z $uid_wrapper ]; then
     echo "Cannot locate cwrap libraries"
     exit 2
@@ -15,3 +16,8 @@ export NSS_WRAPPER_PASSWD=$CWRAP_TEST_SRCDIR/passwd
 export NSS_WRAPPER_GROUP=$CWRAP_TEST_SRCDIR/group
 export UID_WRAPPER=1
 export UID_WRAPPER_ROOT=1
+
+if [ ! -z $pam_wrapper ]; then
+    export PAM_WRAPPER=1
+    export PAM_WRAPPER_CONFDIR=$(pwd)/pam_services
+fi
