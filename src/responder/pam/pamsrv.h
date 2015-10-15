@@ -95,4 +95,7 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *user,
                               const char *token_name);
 
 bool may_do_cert_auth(struct pam_ctx *pctx, struct pam_data *pd);
+
+errno_t pam_forwarder_parse_data(struct cli_ctx *cctx, struct pam_data *pd);
+
 #endif /* __PAMSRV_H__ */
