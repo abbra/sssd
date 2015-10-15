@@ -34,13 +34,6 @@
 #include "responder/common/responder_cache_req.h"
 #include "db/sysdb.h"
 
-enum pam_verbosity {
-    PAM_VERBOSITY_NO_MESSAGES = 0,
-    PAM_VERBOSITY_IMPORTANT,
-    PAM_VERBOSITY_INFO,
-    PAM_VERBOSITY_DEBUG
-};
-
 #define DEFAULT_PAM_VERBOSITY PAM_VERBOSITY_IMPORTANT
 
 static errno_t
@@ -52,55 +45,6 @@ pam_get_last_online_auth_with_curr_token(struct sss_domain_info *domain,
                                          uint64_t *_value);
 
 static void pam_reply(struct pam_auth_req *preq);
-
-static errno_t pack_user_info_account_expired(TALLOC_CTX *mem_ctx,
-                                              const char *user_error_message,
-                                              size_t *resp_len,
-                                              uint8_t **_resp)
-{
-    uint32_t resp_type = SSS_PAM_USER_INFO_ACCOUNT_EXPIRED;
-    size_t err_len;
-    uint8_t *resp;
-    size_t p;
-
-    err_len = strlen(user_error_message);
-    *resp_len = 2 * sizeof(uint32_t) + err_len;
-    resp = talloc_size(mem_ctx, *resp_len);
-    if (resp == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_size failed.\n");
-        return ENOMEM;
-    }
-
-    p = 0;
-    SAFEALIGN_SET_UINT32(&resp[p], resp_type, &p);
-    SAFEALIGN_SET_UINT32(&resp[p], err_len, &p);
-    safealign_memcpy(&resp[p], user_error_message, err_len, &p);
-    if (p != *resp_len) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "Size mismatch\n");
-    }
-
-    *_resp = resp;
-    return EOK;
-}
-
-static void inform_account_expired(struct pam_data* pd,
-                                   const char *pam_message)
-{
-    size_t msg_len;
-    uint8_t *msg;
-    errno_t ret;
-
-    ret = pack_user_info_account_expired(pd, pam_message, &msg_len, &msg);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "pack_user_info_account_expired failed.\n");
-    } else {
-        ret = pam_add_response(pd, SSS_PAM_USER_INFO, msg_len, msg);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-        }
-    }
-}
 
 static bool is_domain_requested(struct pam_data *pd, const char *domain_name)
 {
@@ -303,7 +247,7 @@ static errno_t get_password_for_cache_auth(struct sss_auth_token *authtok,
 static errno_t add_warning_about_expiration(struct pam_data *pd,
                                             struct confdb_ctx *cdb)
 {
-    char* pam_account_expired_message;
+    char *pam_account_expired_message;
     int pam_verbosity;
     errno_t ret;
 
@@ -316,25 +260,28 @@ static errno_t add_warning_about_expiration(struct pam_data *pd,
         pam_verbosity = DEFAULT_PAM_VERBOSITY;
     }
 
-    /* Account expiration warning is printed for sshd. If pam_verbosity
-     * is equal or above PAM_VERBOSITY_INFO then all services are informed
-     * about account expiration.
-     */
-    if (pd->pam_status == PAM_ACCT_EXPIRED &&
-        ((pd->service != NULL && strcasecmp(pd->service, "sshd") == 0) ||
-         pam_verbosity >= PAM_VERBOSITY_INFO)) {
+    if (pd->pam_status != PAM_ACCT_EXPIRED ||
+        ((pd->service == NULL || strcasecmp(pd->service, "sshd") != 0) ||
+         pam_verbosity < PAM_VERBOSITY_INFO)) {
+        return EOK;
+    }
 
-        ret = confdb_get_string(cdb, pd, CONFDB_PAM_CONF_ENTRY,
-                                CONFDB_PAM_ACCOUNT_EXPIRED_MESSAGE, "",
-                                &pam_account_expired_message);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Failed to get expiration message: %d:[%s].\n",
-                  ret, sss_strerror(ret));
-            goto done;
-        }
+    ret = confdb_get_string(cdb, pd, CONFDB_PAM_CONF_ENTRY,
+                            CONFDB_PAM_ACCOUNT_EXPIRED_MESSAGE, "",
+                            &pam_account_expired_message);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+                "Failed to get expiration message: %d:[%s].\n",
+                ret, sss_strerror(ret));
+        goto done;
+    }
 
-        inform_account_expired(pd, pam_account_expired_message);
+    ret = pamsrv_exp_warn(pd, pam_verbosity, pam_account_expired_message);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+                "Failed to add password expiration warning: %d: %s\n",
+                ret, sss_strerror(ret));
+        goto done;
     }
 
     ret = EOK;

@@ -96,6 +96,18 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *user,
 
 bool may_do_cert_auth(struct pam_ctx *pctx, struct pam_data *pd);
 
+enum pam_verbosity {
+    PAM_VERBOSITY_NO_MESSAGES = 0,
+    PAM_VERBOSITY_IMPORTANT,
+    PAM_VERBOSITY_INFO,
+    PAM_VERBOSITY_DEBUG
+};
+
 errno_t pam_forwarder_parse_data(struct cli_ctx *cctx, struct pam_data *pd);
+
+/* PAM responder output API */
+errno_t pamsrv_exp_warn(struct pam_data *pd,
+                        int pam_verbosity,
+                        const char *pam_account_expired_message);
 
 #endif /* __PAMSRV_H__ */
