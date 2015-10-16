@@ -110,4 +110,9 @@ errno_t pamsrv_exp_warn(struct pam_data *pd,
                         int pam_verbosity,
                         const char *pam_account_expired_message);
 
+errno_t pamsrv_reply_packet(TALLOC_CTX *mem_ctx,
+                            struct pam_data *pd,
+                            enum sss_cli_command cmd,
+                            struct sss_packet **_out);
+
 #endif /* __PAMSRV_H__ */

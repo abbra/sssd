@@ -87,3 +87,70 @@ static errno_t pack_user_info_account_expired(TALLOC_CTX *mem_ctx,
     *_resp = resp;
     return EOK;
 }
+
+errno_t pamsrv_reply_packet(TALLOC_CTX *mem_ctx,
+                            struct pam_data *pd,
+                            enum sss_cli_command cmd,
+                            struct sss_packet **_out)
+{
+    errno_t ret;
+    uint8_t *body;
+    size_t blen;
+    int32_t resp_c;
+    int32_t resp_size;
+    struct response_data *resp;
+    int p;
+    struct sss_packet *out;
+
+    ret = sss_packet_new(mem_ctx, 0, cmd, &out);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    resp_c = 0;
+    resp_size = 0;
+    resp = pd->resp_list;
+    while(resp != NULL) {
+        if (!resp->do_not_send_to_client) {
+            resp_c++;
+            resp_size += resp->len;
+        }
+        resp = resp->next;
+    }
+
+    ret = sss_packet_grow(out, sizeof(int32_t) + sizeof(int32_t) +
+                          resp_c * 2 * sizeof(int32_t) + resp_size);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    sss_packet_get_body(out, &body, &blen);
+    DEBUG(SSSDBG_FUNC_DATA, "blen: %zu\n", blen);
+    p = 0;
+
+    memcpy(&body[p], &pd->pam_status, sizeof(int32_t));
+    p += sizeof(int32_t);
+
+    memcpy(&body[p], &resp_c, sizeof(int32_t));
+    p += sizeof(int32_t);
+
+    resp = pd->resp_list;
+    while(resp != NULL) {
+        if (!resp->do_not_send_to_client) {
+            memcpy(&body[p], &resp->type, sizeof(int32_t));
+            p += sizeof(int32_t);
+            memcpy(&body[p], &resp->len, sizeof(int32_t));
+            p += sizeof(int32_t);
+            memcpy(&body[p], resp->data, resp->len);
+            p += resp->len;
+        }
+
+        resp = resp->next;
+    }
+
+    *_out = out;
+    ret = EOK;
+
+done:
+    return ret;
+}
