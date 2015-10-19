@@ -137,6 +137,44 @@ struct test_svc {
     const char *svc_file;
 };
 
+static const char *find_string_in_list(char **list, const char *key)
+{
+    char key_eq[strlen(key)+1+1]; /* trailing NULL and '=' */
+
+    if (list == NULL || key == NULL) {
+        return NULL;
+    }
+
+    snprintf(key_eq, sizeof(key_eq), "%s=", key);
+    for (size_t i = 0; list[i] != NULL; i++) {
+        if (strncmp(list[i], key_eq, sizeof(key_eq)-1) == 0) {
+            return list[i] + sizeof(key_eq)-1;
+        }
+    }
+
+    return NULL;
+}
+
+static void assert_in_env(struct pamtest_case *test,
+                          const char *key,
+                          const char *val)
+{
+    const char *v;
+
+    v = find_string_in_list(test->case_out.envlist, key);
+    assert_non_null(v);
+    assert_string_equal(v, val);
+}
+
+static void assert_not_in_env(struct pamtest_case *test,
+                              const char *key)
+{
+    const char *v;
+
+    v = find_string_in_list(test->case_out.envlist, key);
+    assert_null(v);
+}
+
 static int setup_svc(void **state)
 {
     struct test_svc *svc;
@@ -163,19 +201,35 @@ static int teardown_svc(void **state)
 static void test_pam_authenticate(void **state)
 {
     enum pamtest_err perr;
+    const char *v;
     const char *testuser_authtoks[] = {
         "secret",
         NULL,
     };
     struct pamtest_case tests[] = {
         { PAMTEST_AUTHENTICATE, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_SETCRED, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_OPEN_SESSION, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_CLOSE_SESSION, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
         { PAMTEST_SENTINEL, 0, 0, 0 },
     };
 
     (void) state;	/* unused */
 
     perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
-    assert_int_equal(perr, PAMTEST_ERR_OK);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+
+    assert_not_in_env(&tests[0], "CREDS");
+    assert_not_in_env(&tests[0], "SESSION");
+
+    assert_in_env(&tests[2], "CREDS", "set");
+    assert_not_in_env(&tests[2], "SESSION");
+
+    assert_in_env(&tests[4], "CREDS", "set");
+    assert_in_env(&tests[4], "SESSION", "open");
 }
 
 static void test_pam_authenticate_err(void **state)
@@ -187,6 +241,92 @@ static void test_pam_authenticate_err(void **state)
     };
     struct pamtest_case tests[] = {
         { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, 0, 0 },
+        { PAMTEST_SENTINEL, 0, 0, 0 },
+    };
+
+    (void) state;	/* unused */
+
+    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_acct(void **state)
+{
+    enum pamtest_err perr;
+    struct pamtest_case tests[] = {
+        { PAMTEST_ACCOUNT, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_SENTINEL, 0, 0, 0 },
+    };
+
+    (void) state;	/* unused */
+
+    perr = pamtest("test_pam_sss", "allowed_user", NULL, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_acct_err(void **state)
+{
+    enum pamtest_err perr;
+    struct pamtest_case tests[] = {
+        { PAMTEST_ACCOUNT, PAM_PERM_DENIED, 0, 0 },
+        { PAMTEST_SENTINEL, 0, 0, 0 },
+    };
+
+    (void) state;	/* unused */
+
+    perr = pamtest("test_pam_sss", "denied_user", NULL, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_chauthtok(void **state)
+{
+    enum pamtest_err perr;
+    const char *testuser_authtoks[] = {
+        "secret",
+        "new_secret",
+        "new_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_CHAUTHTOK, PAM_SUCCESS, 0, 0 },
+        { PAMTEST_SENTINEL, 0, 0, 0 },
+    };
+
+    (void) state;	/* unused */
+
+    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_chauthtok_prelim_fail(void **state)
+{
+    enum pamtest_err perr;
+    const char *testuser_authtoks[] = {
+        "wrong_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_CHAUTHTOK, PAM_AUTH_ERR, 0, 0 },
+        { PAMTEST_SENTINEL, 0, 0, 0 },
+    };
+
+    (void) state;	/* unused */
+
+    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_chauthtok_diff_authtoks(void **state)
+{
+    enum pamtest_err perr;
+    const char *testuser_authtoks[] = {
+        "secret",
+        "new_secret",
+        "different_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_CHAUTHTOK, PAM_CRED_ERR, 0, 0 },
         { PAMTEST_SENTINEL, 0, 0, 0 },
     };
 
@@ -368,6 +508,11 @@ int main(int argc, const char *argv[])
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_pam_authenticate),
         cmocka_unit_test(test_pam_authenticate_err),
+        cmocka_unit_test(test_pam_acct),
+        cmocka_unit_test(test_pam_acct_err),
+        cmocka_unit_test(test_pam_chauthtok),
+        cmocka_unit_test(test_pam_chauthtok_prelim_fail),
+        cmocka_unit_test(test_pam_chauthtok_diff_authtoks),
         cmocka_unit_test(test_pam_authenticate_root),
         cmocka_unit_test_setup_teardown(test_pam_authenticate_root_ignore,
                                         setup_svc,

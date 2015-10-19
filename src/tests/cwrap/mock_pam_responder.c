@@ -139,23 +139,126 @@ fail:
     return NULL;
 }
 
-static int test_auth(struct pam_data *pd, const char *exp_pass)
+static bool authtok_matches(struct sss_auth_token *authtok,
+                            const char *exp_pass)
 {
+    int ret;
     const char *password;
     size_t pwlen;
-    int ret;
 
-    ret = sss_authtok_get_password(pd->authtok, &password, &pwlen);
+    ret = sss_authtok_get_password(authtok, &password, &pwlen);
     if (ret != EOK) {
         return EINVAL;
     }
 
     if (strncmp(password, exp_pass, pwlen) == 0) {
-        pd->pam_status = PAM_SUCCESS;
-    } else {
-        pd->pam_status = PAM_AUTH_ERR;
+        return true;
     }
 
+    return false;
+}
+
+static int test_auth(struct pam_data *pd, const char *exp_pass)
+{
+    pd->pam_status = PAM_AUTH_ERR;
+
+    if (authtok_matches(pd->authtok, exp_pass) == true) {
+        pd->pam_status = PAM_SUCCESS;
+    }
+
+    return EOK;
+}
+
+static int test_chauthtok(struct pam_data *pd, const char *exp_pass)
+{
+    pd->pam_status = PAM_AUTH_ERR;
+
+    if (authtok_matches(pd->authtok, exp_pass) == true
+            && authtok_matches(pd->newauthtok, exp_pass) == true) {
+        pd->pam_status = PAM_SUCCESS;
+    }
+
+    return EOK;
+}
+
+static int mock_pam_auth(struct pam_data *pd)
+{
+    errno_t ret = PAM_SYSTEM_ERR;
+
+    if (strcmp(pd->user, "testuser") == 0) {
+        ret = test_auth(pd, "secret");
+    } else if (strcmp(pd->user, "domtest") == 0) {
+        pd->pam_status = PAM_AUTH_ERR;
+        if (pd->requested_domains[0] != NULL
+                && strcmp(pd->requested_domains[0], "mydomain") == 0
+                && pd->requested_domains[1] == NULL) {
+            pd->pam_status = PAM_SUCCESS;
+        }
+
+        ret = EOK;
+    } else if (strcmp(pd->user, "retrytest") == 0) {
+        ret = test_auth(pd, "retried_secret");
+    }
+
+    return ret;
+}
+
+static int mock_pam_chauthtok(struct pam_data *pd)
+{
+    errno_t ret = PAM_SYSTEM_ERR;
+
+    if (strcmp(pd->user, "testuser") == 0) {
+        ret = test_auth(pd, "secret");
+    } else if (strcmp(pd->user, "domtest") == 0) {
+        pd->pam_status = PAM_AUTH_ERR;
+        if (pd->requested_domains[0] != NULL
+                && strcmp(pd->requested_domains[0], "mydomain") == 0
+                && pd->requested_domains[1] == NULL) {
+            pd->pam_status = PAM_SUCCESS;
+        }
+
+        ret = EOK;
+    } else if (strcmp(pd->user, "retrytest") == 0) {
+        ret = test_auth(pd, "retried_secret");
+    }
+
+    return ret;
+}
+
+static int mock_pam_acct(struct pam_data *pd)
+{
+    if (strcmp(pd->user, "allowed_user") == 0) {
+        pd->pam_status = PAM_SUCCESS;
+    } else if (strcmp(pd->user, "denied_user") == 0) {
+        pd->pam_status = PAM_PERM_DENIED;
+    }
+
+    return EOK;
+}
+
+static int mock_pam_set_cred(struct pam_data *pd)
+{
+    const char *cred_msg = "CREDS=set";
+
+    pd->pam_status = PAM_SUCCESS;
+    return pam_add_response(pd, SSS_ALL_ENV_ITEM,
+                            strlen(cred_msg)+1,
+                            (const uint8_t *) cred_msg);
+}
+
+static int mock_pam_open_session(struct pam_data *pd)
+{
+    const char *session_msg = "SESSION=open";
+
+    pd->pam_status = PAM_SUCCESS;
+    return pam_add_response(pd, SSS_ALL_ENV_ITEM,
+                            strlen(session_msg)+1,
+                            (const uint8_t *) session_msg);
+}
+
+static int mock_pam_close_session(struct pam_data *pd)
+{
+    pd->pam_status = PAM_SUCCESS;
     return EOK;
 }
 
@@ -190,19 +293,22 @@ int __wrap_sss_pam_make_request(enum sss_cli_command cmd,
         goto done;
     }
 
+    pd->pam_status = PAM_SYSTEM_ERR;
+
     if (cmd == SSS_PAM_AUTHENTICATE) {
-        if (strcmp(pd->user, "testuser") == 0) {
-            ret = test_auth(pd, "secret");
-        } else if (strcmp(pd->user, "domtest") == 0) {
-            pd->pam_status = PAM_AUTH_ERR;
-            if (pd->requested_domains[0] != NULL
-                    && strcmp(pd->requested_domains[0], "mydomain") == 0
-                    && pd->requested_domains[1] == NULL) {
-                pd->pam_status = PAM_SUCCESS;
-            }
-        } else if (strcmp(pd->user, "retrytest") == 0) {
-            ret = test_auth(pd, "retried_secret");
-        }
+        ret = mock_pam_auth(pd);
+    } else if (cmd == SSS_PAM_ACCT_MGMT) {
+        ret = mock_pam_acct(pd);
+    } else if (cmd == SSS_PAM_CHAUTHTOK_PRELIM) {
+        ret = mock_pam_auth(pd);
+    } else if (cmd == SSS_PAM_CHAUTHTOK) {
+        ret = mock_pam_chauthtok(pd);
+    } else if (cmd == SSS_PAM_SETCRED) {
+        ret = mock_pam_set_cred(pd);
+    } else if (cmd == SSS_PAM_OPEN_SESSION) {
+        ret = mock_pam_open_session(pd);
+    } else if (cmd == SSS_PAM_CLOSE_SESSION) {
+        ret = mock_pam_close_session(pd);
     }
 
     if (ret != EOK) {

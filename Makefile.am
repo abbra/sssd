@@ -2746,6 +2746,7 @@ pam_test_sss_la_SOURCES = \
     src/responder/pam/pamsrv_extract.c \
     src/responder/pam/pamsrv_reply.c \
     src/responder/pam/pamsrv_p11.c \
+    src/providers/dp_pam_data_util.c \
     $(NULL)
 pam_test_sss_la_CFLAGS = \
     $(AM_CFLAGS) \
