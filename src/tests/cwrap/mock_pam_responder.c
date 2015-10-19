@@ -139,6 +139,26 @@ fail:
     return NULL;
 }
 
+static int test_auth(struct pam_data *pd, const char *exp_pass)
+{
+    const char *password;
+    size_t pwlen;
+    int ret;
+
+    ret = sss_authtok_get_password(pd->authtok, &password, &pwlen);
+    if (ret != EOK) {
+        return EINVAL;
+    }
+
+    if (strncmp(password, exp_pass, pwlen) == 0) {
+        pd->pam_status = PAM_SUCCESS;
+    } else {
+        pd->pam_status = PAM_AUTH_ERR;
+    }
+
+    return EOK;
+}
+
 /* Receives a packed response and returns a mock reply */
 int __wrap_sss_pam_make_request(enum sss_cli_command cmd,
                                 struct sss_cli_req_data *rd,
@@ -172,21 +192,21 @@ int __wrap_sss_pam_make_request(enum sss_cli_command cmd,
 
     if (cmd == SSS_PAM_AUTHENTICATE) {
         if (strcmp(pd->user, "testuser") == 0) {
-            const char *password;
-            size_t pwlen;
-
-            ret = sss_authtok_get_password(pd->authtok, &password, &pwlen);
-            if (ret != EOK) {
-                ret = EINVAL;
-                goto done;
-            }
-
-            if (strncmp(password, "secret", pwlen) == 0) {
+            ret = test_auth(pd, "secret");
+        } else if (strcmp(pd->user, "domtest") == 0) {
+            pd->pam_status = PAM_AUTH_ERR;
+            if (pd->requested_domains[0] != NULL
+                    && strcmp(pd->requested_domains[0], "mydomain") == 0
+                    && pd->requested_domains[1] == NULL) {
                 pd->pam_status = PAM_SUCCESS;
-            } else {
-                pd->pam_status = PAM_AUTH_ERR;
             }
+        } else if (strcmp(pd->user, "retrytest") == 0) {
+            ret = test_auth(pd, "retried_secret");
         }
+    }
+
+    if (ret != EOK) {
+        goto done;
     }
 
     ret = pamsrv_reply_packet(cctx->creq, pd, cmd, &cctx->creq->out);

@@ -189,6 +189,7 @@ pam_sss_wrapper_tests_LDADD = \
     $(POPT_LIBS) \
     $(PAM_LIBS) \
     $(PAMTEST_LIBS) \
+    $(abs_top_builddir)/libsss_util.la \
     $(abs_top_builddir)/libsss_debug.la \
     $(abs_top_builddir)/libsss_test_common.la \
     $(NULL)

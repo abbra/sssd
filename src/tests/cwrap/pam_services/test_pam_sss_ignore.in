@@ -1,0 +1,1 @@
+account         [ignore=ok default=bad]        @abs_top_builddir@/.libs/pam_test_sss.so

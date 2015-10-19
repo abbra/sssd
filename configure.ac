@@ -410,6 +410,7 @@ AC_CONFIG_FILES([Makefile contrib/sssd.spec src/examples/rwtab src/doxy.config
                  po/Makefile.in src/man/Makefile src/tests/cwrap/Makefile
                  src/tests/intg/Makefile
                  src/tests/cwrap/pam_services/test_pam_sss
+                 src/tests/cwrap/pam_services/test_pam_sss_ignore
                  src/providers/ipa/ipa_hbac.pc src/providers/ipa/ipa_hbac.doxy
                  src/lib/idmap/sss_idmap.pc src/lib/idmap/sss_idmap.doxy
                  src/sss_client/sudo/sss_sudo.doxy
