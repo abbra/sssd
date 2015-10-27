@@ -1,0 +1,4 @@
+auth            required        @libdir@/pam_wrapper/pam_get_items.so
+auth            required        @abs_top_builddir@/.libs/pam_test_sss.so
+auth            required        @libdir@/pam_wrapper/pam_get_items.so
+password        required        @abs_top_builddir@/.libs/pam_test_sss.so

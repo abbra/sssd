@@ -303,7 +303,6 @@ static void pam_reply(struct pam_auth_req *preq)
     struct tevent_timer *te;
     struct pam_data *pd;
     struct pam_ctx *pctx;
-    uint32_t user_info_type;
     time_t exp_date = -1;
     time_t delay_until = -1;
 
@@ -359,16 +358,8 @@ static void pam_reply(struct pam_auth_req *preq)
             break;
         case SSS_PAM_CHAUTHTOK_PRELIM:
         case SSS_PAM_CHAUTHTOK:
-            DEBUG(SSSDBG_FUNC_DATA,
-                  "Password change not possible while offline.\n");
-            pd->pam_status = PAM_AUTHTOK_ERR;
-            user_info_type = SSS_PAM_USER_INFO_OFFLINE_CHPASS;
-            ret = pam_add_response(pd, SSS_PAM_USER_INFO, sizeof(uint32_t),
-                                   (const uint8_t *) &user_info_type);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-                goto done;
-            }
+            preq->pd->pam_status = PAM_AUTHTOK_ERR;
+            pamsrv_resp_offline_chpass(preq->pd);
             break;
 /* TODO: we need the pam session cookie here to make sure that cached
  * authentication was successful */
@@ -470,52 +461,14 @@ static void pam_handle_cached_login(struct pam_auth_req *preq, int ret,
                                     time_t expire_date, time_t delayed_until,
                                     bool use_cached_auth)
 {
-    uint32_t resp_type;
-    size_t resp_len;
-    uint8_t *resp;
-    int64_t dummy;
-
     preq->pd->pam_status = cached_login_pam_status(ret);
 
     switch (preq->pd->pam_status) {
         case PAM_SUCCESS:
-            resp_type = SSS_PAM_USER_INFO_OFFLINE_AUTH;
-            resp_len = sizeof(uint32_t) + sizeof(int64_t);
-            resp = talloc_size(preq->pd, resp_len);
-            if (resp == NULL) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "talloc_size failed, cannot prepare user info.\n");
-            } else {
-                memcpy(resp, &resp_type, sizeof(uint32_t));
-                dummy = (int64_t) expire_date;
-                memcpy(resp+sizeof(uint32_t), &dummy, sizeof(int64_t));
-                ret = pam_add_response(preq->pd, SSS_PAM_USER_INFO, resp_len,
-                                       (const uint8_t *) resp);
-                if (ret != EOK) {
-                    DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-                }
-            }
+            pamsrv_resp_offline_auth(preq->pd, expire_date);
             break;
         case PAM_PERM_DENIED:
-            if (delayed_until >= 0) {
-                resp_type = SSS_PAM_USER_INFO_OFFLINE_AUTH_DELAYED;
-                resp_len = sizeof(uint32_t) + sizeof(int64_t);
-                resp = talloc_size(preq->pd, resp_len);
-                if (resp == NULL) {
-                    DEBUG(SSSDBG_CRIT_FAILURE,
-                          "talloc_size failed, cannot prepare user info.\n");
-                } else {
-                    memcpy(resp, &resp_type, sizeof(uint32_t));
-                    dummy = (int64_t) delayed_until;
-                    memcpy(resp+sizeof(uint32_t), &dummy, sizeof(int64_t));
-                    ret = pam_add_response(preq->pd, SSS_PAM_USER_INFO, resp_len,
-                                           (const uint8_t *) resp);
-                    if (ret != EOK) {
-                        DEBUG(SSSDBG_CRIT_FAILURE,
-                              "pam_add_response failed.\n");
-                    }
-                }
-            }
+            pamsrv_resp_offline_delayed_auth(preq->pd, delayed_until);
             break;
         case PAM_AUTH_ERR:
             /* Was this attempt to authenticate from cache? */

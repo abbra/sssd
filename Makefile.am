@@ -2750,6 +2750,8 @@ pam_test_sss_la_SOURCES = \
     $(NULL)
 pam_test_sss_la_CFLAGS = \
     $(AM_CFLAGS) \
+    -DUNIT_TESTING \
+    -DPAM_PREAUTH_INDICATOR=TEST_DIR\"/pam_preauth_available\" \
     $(NULL)
 pam_test_sss_la_LIBADD = \
     $(pam_sss_la_LIBADD) \

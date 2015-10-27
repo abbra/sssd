@@ -58,6 +58,78 @@ errno_t pamsrv_exp_warn(struct pam_data *pd,
     return EOK;
 }
 
+void pamsrv_resp_offline_auth(struct pam_data *pd, time_t expire_date)
+{
+    int ret;
+    uint32_t resp_type;
+    size_t resp_len;
+    uint8_t *resp;
+    int64_t dummy;
+
+    resp_type = SSS_PAM_USER_INFO_OFFLINE_AUTH;
+    resp_len = sizeof(uint32_t) + sizeof(int64_t);
+    resp = talloc_size(pd, resp_len);
+    if (resp == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+                "talloc_size failed, cannot prepare user info.\n");
+    } else {
+        memcpy(resp, &resp_type, sizeof(uint32_t));
+        dummy = (int64_t) expire_date;
+        memcpy(resp+sizeof(uint32_t), &dummy, sizeof(int64_t));
+        ret = pam_add_response(pd, SSS_PAM_USER_INFO, resp_len,
+                               (const uint8_t *) resp);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+        }
+    }
+}
+
+void pamsrv_resp_offline_delayed_auth(struct pam_data *pd,
+                                      time_t delayed_until)
+{
+    int ret;
+    uint32_t resp_type;
+    size_t resp_len;
+    uint8_t *resp;
+    int64_t dummy;
+
+    if (delayed_until >= 0) {
+        resp_type = SSS_PAM_USER_INFO_OFFLINE_AUTH_DELAYED;
+        resp_len = sizeof(uint32_t) + sizeof(int64_t);
+        resp = talloc_size(pd, resp_len);
+        if (resp == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "talloc_size failed, cannot prepare user info.\n");
+        } else {
+            memcpy(resp, &resp_type, sizeof(uint32_t));
+            dummy = (int64_t) delayed_until;
+            memcpy(resp+sizeof(uint32_t), &dummy, sizeof(int64_t));
+            ret = pam_add_response(pd, SSS_PAM_USER_INFO, resp_len,
+                                   (const uint8_t *) resp);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+            }
+        }
+    }
+}
+
+void pamsrv_resp_offline_chpass(struct pam_data *pd)
+{
+    int ret;
+    uint32_t user_info_type;
+
+    DEBUG(SSSDBG_FUNC_DATA,
+          "Password change not possible while offline.\n");
+
+    user_info_type = SSS_PAM_USER_INFO_OFFLINE_CHPASS;
+
+    ret = pam_add_response(pd, SSS_PAM_USER_INFO, sizeof(uint32_t),
+                           (const uint8_t *) &user_info_type);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+    }
+}
+
 static errno_t pack_user_info_account_expired(TALLOC_CTX *mem_ctx,
                                               const char *user_error_message,
                                               size_t *resp_len,

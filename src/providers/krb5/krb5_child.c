@@ -855,54 +855,8 @@ static errno_t pack_response_packet(TALLOC_CTX *mem_ctx, errno_t error,
 
 static errno_t k5c_attach_otp_info_msg(struct krb5_req *kr)
 {
-    uint8_t *msg = NULL;
-    size_t msg_len;
-    int ret;
-    size_t vendor_len = 0;
-    size_t token_id_len = 0;
-    size_t challenge_len = 0;
-    size_t idx = 0;
-
-    msg_len = 3;
-    if (kr->otp_vendor != NULL) {
-        vendor_len = strlen(kr->otp_vendor);
-        msg_len += vendor_len;
-    }
-
-    if (kr->otp_token_id != NULL) {
-        token_id_len = strlen(kr->otp_token_id);
-        msg_len += token_id_len;
-    }
-
-    if (kr->otp_challenge != NULL) {
-        challenge_len = strlen(kr->otp_challenge);
-        msg_len += challenge_len;
-    }
-
-    msg = talloc_zero_size(kr, msg_len);
-    if (msg == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc_size failed.\n");
-        return ENOMEM;
-    }
-
-    if (kr->otp_vendor != NULL) {
-        memcpy(msg, kr->otp_vendor, vendor_len);
-    }
-    idx += vendor_len +1;
-
-    if (kr->otp_token_id != NULL) {
-        memcpy(msg + idx, kr->otp_token_id, token_id_len);
-    }
-    idx += token_id_len +1;
-
-    if (kr->otp_challenge != NULL) {
-        memcpy(msg + idx, kr->otp_challenge, challenge_len);
-    }
-
-    ret = pam_add_response(kr->pd, SSS_PAM_OTP_INFO, msg_len, msg);
-    talloc_zfree(msg);
-
-    return ret;
+    return pam_resp_otp_info(kr->pd, kr->otp_vendor,
+                             kr->otp_token_id, kr->otp_challenge);
 }
 
 static errno_t k5c_attach_ccname_msg(struct krb5_req *kr)
@@ -1396,19 +1350,7 @@ static errno_t changepw_child(struct krb5_req *kr, bool prelim)
     DEBUG(SSSDBG_TRACE_INTERNAL,
           "chpass is%s using OTP\n", kr->otp ? "" : " not");
     if (kerr != 0) {
-        ret = pack_user_info_chpass_error(kr->pd, "Old password not accepted.",
-                                          &msg_len, &msg);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "pack_user_info_chpass_error failed.\n");
-        } else {
-            ret = pam_add_response(kr->pd, SSS_PAM_USER_INFO, msg_len,
-                                   msg);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "pam_add_response failed.\n");
-            }
-        }
+        pam_resp_srv_msg(kr->pd, "Old password not accepted.");
         return kerr;
     }
 
@@ -1474,19 +1416,7 @@ static errno_t changepw_child(struct krb5_req *kr, bool prelim)
         }
 
         if (user_error_message != NULL) {
-            ret = pack_user_info_chpass_error(kr->pd, user_error_message,
-                                              &user_resp_len, &user_resp);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "pack_user_info_chpass_error failed.\n");
-            } else {
-                ret = pam_add_response(kr->pd, SSS_PAM_USER_INFO, user_resp_len,
-                                       user_resp);
-                if (ret != EOK) {
-                    DEBUG(SSSDBG_CRIT_FAILURE,
-                          "pack_response_packet failed.\n");
-                }
-            }
+            pam_resp_srv_msg(kr->pd, user_error_message);
         }
 
         return ERR_CHPASS_FAILED;

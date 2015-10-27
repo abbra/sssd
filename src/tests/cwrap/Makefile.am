@@ -182,6 +182,8 @@ pam_sss_wrapper_tests_SOURCES = \
     $(NULL)
 pam_sss_wrapper_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    -DUNIT_TESTING \
+    -DPAM_PREAUTH_INDICATOR=TEST_DIR\"/pam_preauth_available\" \
     $(NULL)
 pam_sss_wrapper_tests_LDADD = \
     $(CMOCKA_LIBS) \

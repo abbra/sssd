@@ -113,7 +113,11 @@ static char *service_arg(TALLOC_CTX *mem_ctx,
 
     line = svc;
     for (i = 0; i < nlines; i++) {
-        nb = fprintf(dst_f, "%s %s\n", line, arg);
+        if (arg != NULL) {
+            nb = fprintf(dst_f, "%s %s\n", line, arg);
+        } else {
+            nb = fprintf(dst_f, "%s\n", line);
+        }
         if (nb < 0) {
             goto fail;
         }
@@ -131,6 +135,13 @@ fail:
     }
     talloc_free(tmp_ctx);
     return NULL;
+}
+
+static char *copy_service(TALLOC_CTX *mem_ctx,
+                          const char *src_file,
+                          const char *dst_file)
+{
+    return service_arg(mem_ctx, src_file, dst_file, NULL);
 }
 
 struct test_svc {
@@ -201,25 +212,28 @@ static int teardown_svc(void **state)
 static void test_pam_authenticate(void **state)
 {
     enum pamtest_err perr;
-    const char *v;
+    struct pamtest_conv_data conv_data;
     const char *testuser_authtoks[] = {
         "secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SETCRED, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_OPEN_SESSION, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_CLOSE_SESSION, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_GETENVLIST, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_SETCRED, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_OPEN_SESSION, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CLOSE_SESSION, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
-    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = testuser_authtoks;
+
+    perr = pamtest("test_pam_sss", "testuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 
     assert_not_in_env(&tests[0], "CREDS");
@@ -232,21 +246,222 @@ static void test_pam_authenticate(void **state)
     assert_in_env(&tests[4], "SESSION", "open");
 }
 
+enum pamtest_err pamtest_cloc(const char *service,
+                              const char *user,
+                              struct pamtest_conv_data *conv_data,
+                              struct pamtest_case *test_cases)
+{
+    char *locale;
+    enum pamtest_err perr;
+
+    locale = setlocale(LC_ALL, NULL);
+    setlocale(LC_ALL, "C");
+    perr = pamtest(service, user, conv_data, test_cases);
+    setlocale(LC_ALL, locale);
+
+    return perr;
+}
+
+static void test_auth_conv(const char *svc,
+                           const char *username,
+                           int auth_opcode,
+                           char *auth_info_msg)
+{
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    char *info_arr[] = {
+        auth_info_msg,
+        NULL,
+    };
+    const char *authtoks[] = {
+        "secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_AUTHENTICATE, auth_opcode, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+    conv_data.out_info = info_arr;
+
+    perr = pamtest_cloc(svc, username, &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_chpass_conv(const char *svc,
+                             const char *username,
+                             int exp_opcode,
+                             char *chpass_info_msg)
+{
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    char *info_arr[] = {
+        chpass_info_msg,
+        NULL,
+    };
+    const char *authtoks[] = {
+        "secret",
+        "new_secret",
+        "new_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_CHAUTHTOK, exp_opcode, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+    conv_data.out_info = info_arr;
+
+    perr = pamtest_cloc(svc, username, &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_authenticate_offline(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "offlineuser", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Authenticated with cached credentials, " \
+                        "your cached password will expire at: " \
+                        "Thu Jan  1 01:02:03 1970.");
+}
+
+static void test_pam_authenticate_offline_err(void **state)
+{
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+    char *info_arr[] = {
+        auth_info_msg,
+        NULL,
+    };
+    const char *offlineuser_authtoks[] = {
+        "wrong_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+
+    (void) state;       /* unused */
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = offlineuser_authtoks;
+    conv_data.out_info = info_arr;
+
+    perr = pamtest_cloc("test_pam_sss", "offlineuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+
+    assert_string_equal(auth_info_msg,
+                        "Authentication is denied until: " \
+                        "Thu Jan  1 01:07:36 1970.");
+}
+
+static void test_pam_chpass_offline_msg(void **state)
+{
+    char chpass_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_chpass_conv("test_pam_sss", "offlinechpass", PAM_AUTH_ERR, chpass_info_msg);
+    assert_string_equal(chpass_info_msg,
+                        "System is offline, password change not possible");
+}
+
+static void test_pam_chpass_srv_msg(void **state)
+{
+    char chpass_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_chpass_conv("test_pam_sss", "srvchpass", PAM_AUTH_ERR, chpass_info_msg);
+    assert_string_equal(chpass_info_msg,
+                        "Password change failed. Server message: Test server message");
+}
+
+static void test_pam_auth_grace_msg(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "gracelogin", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Your password has expired. " \
+                        "You have 1 grace login(s) remaining.");
+}
+
+static void test_pam_auth_expire_sec_msg(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "expirelogin_sec", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Your password will expire in 1 second(s).");
+}
+
+static void test_pam_auth_expire_min_msg(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "expirelogin_min", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Your password will expire in 1 minute(s).");
+}
+
+static void test_pam_auth_expire_hour_msg(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "expirelogin_hour", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Your password will expire in 1 hour(s).");
+}
+
+static void test_pam_auth_expire_day_msg(void **state)
+{
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+
+    (void) state;       /* unused */
+
+    test_auth_conv("test_pam_sss", "expirelogin_day", PAM_SUCCESS, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Your password will expire in 1 day(s).");
+}
+
 static void test_pam_authenticate_err(void **state)
 {
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *testuser_authtoks[] = {
         "wrong_secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
-    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = testuser_authtoks;
+
+    perr = pamtest("test_pam_sss", "testuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -254,11 +469,11 @@ static void test_pam_acct(void **state)
 {
     enum pamtest_err perr;
     struct pamtest_case tests[] = {
-        { PAMTEST_ACCOUNT, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_ACCOUNT, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
     perr = pamtest("test_pam_sss", "allowed_user", NULL, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
@@ -268,11 +483,11 @@ static void test_pam_acct_err(void **state)
 {
     enum pamtest_err perr;
     struct pamtest_case tests[] = {
-        { PAMTEST_ACCOUNT, PAM_PERM_DENIED, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_ACCOUNT, PAM_PERM_DENIED, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
     perr = pamtest("test_pam_sss", "denied_user", NULL, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
@@ -281,6 +496,7 @@ static void test_pam_acct_err(void **state)
 static void test_pam_chauthtok(void **state)
 {
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *testuser_authtoks[] = {
         "secret",
         "new_secret",
@@ -288,37 +504,45 @@ static void test_pam_chauthtok(void **state)
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_CHAUTHTOK, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_CHAUTHTOK, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
-    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = testuser_authtoks;
+
+    perr = pamtest("test_pam_sss", "testuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
 static void test_pam_chauthtok_prelim_fail(void **state)
 {
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *testuser_authtoks[] = {
         "wrong_secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_CHAUTHTOK, PAM_AUTH_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_CHAUTHTOK, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
-    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = testuser_authtoks;
+
+    perr = pamtest("test_pam_sss", "testuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
 static void test_pam_chauthtok_diff_authtoks(void **state)
 {
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *testuser_authtoks[] = {
         "secret",
         "new_secret",
@@ -326,13 +550,16 @@ static void test_pam_chauthtok_diff_authtoks(void **state)
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_CHAUTHTOK, PAM_CRED_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_CHAUTHTOK, PAM_CRED_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
-    perr = pamtest("test_pam_sss", "testuser", testuser_authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = testuser_authtoks;
+
+    perr = pamtest("test_pam_sss", "testuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -340,11 +567,11 @@ static void test_pam_authenticate_root(void **state)
 {
     enum pamtest_err perr;
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_USER_UNKNOWN, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_USER_UNKNOWN, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
 
-    (void) state;	/* unused */
+    (void) state;       /* unused */
 
     perr = pamtest("test_pam_sss_ignore", "root", NULL, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
@@ -355,8 +582,8 @@ static void test_pam_authenticate_root_ignore(void **state)
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_IGNORE, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_IGNORE, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_ignore_arg";
 
@@ -375,13 +602,14 @@ static void test_pam_authenticate_domains(void **state)
 {
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *authtoks[] = {
         "secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_domains";
 
@@ -392,7 +620,10 @@ static void test_pam_authenticate_domains(void **state)
                                 svcname, "domains=mydomain");
     assert_non_null(svc->svc_file);
 
-    perr = pamtest(svcname, "domtest", authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    perr = pamtest(svcname, "domtest", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -401,8 +632,8 @@ static void test_pam_authenticate_domains_err(void **state)
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_SYSTEM_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_SYSTEM_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_domains_err";
 
@@ -421,14 +652,15 @@ static void test_pam_authenticate_retry(void **state)
 {
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *authtoks[] = {
         "wrong_secret",
         "retried_secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_retry";
 
@@ -439,7 +671,10 @@ static void test_pam_authenticate_retry(void **state)
                                 svcname, "retry=1");
     assert_non_null(svc->svc_file);
 
-    perr = pamtest(svcname, "retrytest", authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    perr = pamtest(svcname, "retrytest", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -447,14 +682,15 @@ static void test_pam_authenticate_retry_neg(void **state)
 {
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *authtoks[] = {
         "wrong_secret",
         "retried_secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_retry";
 
@@ -465,7 +701,10 @@ static void test_pam_authenticate_retry_neg(void **state)
                                 svcname, "retry=-1");
     assert_non_null(svc->svc_file);
 
-    perr = pamtest(svcname, "retrytest", authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    perr = pamtest(svcname, "retrytest", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -473,14 +712,15 @@ static void test_pam_authenticate_retry_eparse(void **state)
 {
     struct test_svc *svc = talloc_get_type(*state, struct test_svc);
     enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
     const char *authtoks[] = {
         "wrong_secret",
         "retried_secret",
         NULL,
     };
     struct pamtest_case tests[] = {
-        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, 0, 0 },
-        { PAMTEST_SENTINEL, 0, 0, 0 },
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
     };
     const char *svcname = "test_pam_sss_retry";
 
@@ -491,7 +731,203 @@ static void test_pam_authenticate_retry_eparse(void **state)
                                 svcname, "retry=");
     assert_non_null(svc->svc_file);
 
-    perr = pamtest(svcname, "retrytest", authtoks, tests);
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    perr = pamtest(svcname, "retrytest", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_authenticate_ssh_expire(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    char auth_info_msg[PAM_MAX_MSG_SIZE] = { '\0' };
+    const char *svcname = "sshd";
+
+    /* This test only works with sshd service */
+    svc->svc_file = copy_service(svc, "test_pam_sss", svcname);
+    assert_non_null(svc->svc_file);
+
+    test_auth_conv(svcname, "sshuser", PAM_ACCT_EXPIRED, auth_info_msg);
+    assert_string_equal(auth_info_msg,
+                        "Permission denied. Server message: " \
+                        "SSH user is expired");
+}
+
+static void test_pam_authenticate_stack_forward_pass(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    const char *authtoks[] = {
+        "secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+    const char *svcname = "test_pam_sss_forward";
+
+    /* Copy file from the previous test and just add an argument. The retval
+     * will be different this time
+     */
+    svc->svc_file = service_arg(svc, "test_pam_sss_stack",
+                                svcname, "forward_pass");
+    assert_non_null(svc->svc_file);
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    /* No authtok passed on w/o forward_pass */
+    perr = pamtest("test_pam_sss_stack", "testuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+    assert_not_in_env(&tests[1], "PAM_AUTHTOK");
+
+    /* Authtok passed on with forward_pass */
+    perr = pamtest(svcname, "testuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+    assert_in_env(&tests[1], "PAM_AUTHTOK", "secret");
+}
+
+static void test_pam_authenticate_stack_use_first_pass(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    struct pamtest_case neg_tests[] = {
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_AUTHENTICATE, PAM_AUTH_ERR, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+    const char *svcname = "test_pam_sss_use_first_pass";
+
+    /* Copy file from the previous test and just add an argument. The retval
+     * will be different this time
+     */
+    svc->svc_file = service_arg(svc, "test_pam_sss_stack",
+                                svcname, "use_first_pass");
+    assert_non_null(svc->svc_file);
+
+    ZERO_STRUCT(conv_data);
+
+    /* No authtok passed onto the stack, must error... */
+    perr = pamtest(svcname, "testuser", &conv_data, neg_tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, neg_tests);
+
+    /* Authtok passed onto the stack, should be used.. */
+    setenv("PAM_AUTHTOK", "secret", 1);
+    perr = pamtest(svcname, "testuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+}
+
+static void test_pam_chauthtok_stack_forward_pass(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    const char *authtoks[] = {
+        "secret",
+        "new_secret",
+        "new_secret",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_CHAUTHTOK, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_GETENVLIST, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+    const char *svcname = "test_pam_sss_forward";
+
+    /* Copy file from the previous test and just add an argument. The retval
+     * will be different this time
+     */
+    svc->svc_file = service_arg(svc, "test_pam_sss_stack",
+                                svcname, "forward_pass");
+    assert_non_null(svc->svc_file);
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    /* No authtok passed on w/o forward_pass */
+    perr = pamtest("test_pam_sss_stack", "testuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+    assert_not_in_env(&tests[1], "PAM_AUTHTOK");
+
+    /* Authtok passed on with forward_pass */
+    perr = pamtest(svcname, "testuser", &conv_data, tests);
+    assert_pam_test(perr, PAMTEST_ERR_OK, tests);
+    assert_in_env(&tests[1], "PAM_AUTHTOK", "secret");
+}
+
+static int setup_otp(void **state)
+{
+    struct test_svc *svc;
+    int rv;
+    int fd;
+    const char *file = PAM_PREAUTH_INDICATOR;
+
+    rv = setup_svc((void **) &svc);
+    if (rv != 0) {
+        return rv;
+    }
+
+    fd = open(file, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW,
+              0644);
+    if (fd < 0) {
+        return 1;
+    }
+
+    *state = svc;
+    return 0;
+}
+
+static int teardown_otp(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    int rv;
+
+    rv = teardown_svc((void **) &svc);
+    if (rv != 0) {
+        return rv;
+    }
+
+    unlink(PAM_PREAUTH_INDICATOR);
+    return 0;
+}
+
+static void test_pam_authenticate_otp_auth(void **state)
+{
+    struct test_svc *svc = talloc_get_type(*state, struct test_svc);
+    enum pamtest_err perr;
+    struct pamtest_conv_data conv_data;
+    const char *authtoks[] = {
+        "secret",
+        "1234",
+        NULL,
+    };
+    struct pamtest_case tests[] = {
+        { PAMTEST_AUTHENTICATE, PAM_SUCCESS, PAMTEST_CASE_INIT },
+        { PAMTEST_CASE_SENTINEL },
+    };
+    const char *svcname = "test_pam_sss_otp_auth";
+
+    /* Copy file from the previous test and just add an argument. The retval
+     * will be different this time
+     */
+    svc->svc_file = service_arg(svc, "test_pam_sss",
+                                svcname, "use_2fa");
+    assert_non_null(svc->svc_file);
+
+    ZERO_STRUCT(conv_data);
+    conv_data.in_echo_off = authtoks;
+
+    perr = pamtest(svcname, "otpuser", &conv_data, tests);
     assert_pam_test(perr, PAMTEST_ERR_OK, tests);
 }
 
@@ -508,6 +944,15 @@ int main(int argc, const char *argv[])
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_pam_authenticate),
         cmocka_unit_test(test_pam_authenticate_err),
+        cmocka_unit_test(test_pam_authenticate_offline),
+        cmocka_unit_test(test_pam_authenticate_offline_err),
+        cmocka_unit_test(test_pam_auth_expire_sec_msg),
+        cmocka_unit_test(test_pam_auth_expire_min_msg),
+        cmocka_unit_test(test_pam_auth_expire_hour_msg),
+        cmocka_unit_test(test_pam_auth_expire_day_msg),
+        cmocka_unit_test(test_pam_auth_grace_msg),
+        cmocka_unit_test(test_pam_chpass_offline_msg),
+        cmocka_unit_test(test_pam_chpass_srv_msg),
         cmocka_unit_test(test_pam_acct),
         cmocka_unit_test(test_pam_acct_err),
         cmocka_unit_test(test_pam_chauthtok),
@@ -532,6 +977,21 @@ int main(int argc, const char *argv[])
         cmocka_unit_test_setup_teardown(test_pam_authenticate_retry_eparse,
                                         setup_svc,
                                         teardown_svc),
+        cmocka_unit_test_setup_teardown(test_pam_authenticate_ssh_expire,
+                                        setup_svc,
+                                        teardown_svc),
+        cmocka_unit_test_setup_teardown(test_pam_authenticate_stack_forward_pass,
+                                        setup_svc,
+                                        teardown_svc),
+        cmocka_unit_test_setup_teardown(test_pam_authenticate_stack_use_first_pass,
+                                        setup_svc,
+                                        teardown_svc),
+        cmocka_unit_test_setup_teardown(test_pam_chauthtok_stack_forward_pass,
+                                        setup_svc,
+                                        teardown_svc),
+        cmocka_unit_test_setup_teardown(test_pam_authenticate_otp_auth,
+                                        setup_otp,
+                                        teardown_otp),
     };
 
     /* Set debug level to invalid value so we can deside if -d 0 was used. */

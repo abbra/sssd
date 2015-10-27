@@ -192,3 +192,139 @@ int pam_add_response(struct pam_data *pd, enum response_type type,
 
     return EOK;
 }
+
+static void pam_resp_add_pwexpire(struct pam_data *pd,
+                                  uint32_t key,
+                                  uint32_t value)
+{
+    uint32_t *data;
+    errno_t ret;
+
+    data = talloc_size(pd, 2 * sizeof(uint32_t));
+    if (data == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_size failed.\n");
+        return;
+    }
+
+    data[0] = key;
+    data[1] = value;
+
+    ret = pam_add_response(pd, SSS_PAM_USER_INFO, 2 * sizeof(uint32_t),
+                           (uint8_t*)data);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+    }
+}
+
+void pam_resp_grace_login(struct pam_data *pd, uint32_t grace)
+{
+    pam_resp_add_pwexpire(pd, SSS_PAM_USER_INFO_GRACE_LOGIN, grace);
+}
+
+void pam_resp_expired_login(struct pam_data *pd, uint32_t expire)
+{
+    pam_resp_add_pwexpire(pd, SSS_PAM_USER_INFO_EXPIRE_WARN, expire);
+}
+
+static errno_t pack_user_info_chpass_error(TALLOC_CTX *mem_ctx,
+                                           const char *user_error_message,
+                                           size_t *resp_len,
+                                           uint8_t **_resp)
+{
+    uint32_t resp_type = SSS_PAM_USER_INFO_CHPASS_ERROR;
+    size_t err_len;
+    uint8_t *resp;
+    size_t p;
+
+    err_len = strlen(user_error_message);
+    *resp_len = 2 * sizeof(uint32_t) + err_len;
+    resp = talloc_size(mem_ctx, *resp_len);
+    if (resp == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_size failed.\n");
+        return ENOMEM;
+    }
+
+    p = 0;
+    SAFEALIGN_SET_UINT32(&resp[p], resp_type, &p);
+    SAFEALIGN_SET_UINT32(&resp[p], err_len, &p);
+    safealign_memcpy(&resp[p], user_error_message, err_len, &p);
+    if (p != *resp_len) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Size mismatch\n");
+    }
+
+    *_resp = resp;
+    return EOK;
+}
+
+void pam_resp_srv_msg(struct pam_data *pd, const char *str_msg)
+{
+    int ret;
+    size_t msg_len;
+    uint8_t *msg;
+
+    ret = pack_user_info_chpass_error(pd, str_msg, &msg_len, &msg);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "pack_user_info_chpass_error failed.\n");
+    } else {
+        ret = pam_add_response(pd, SSS_PAM_USER_INFO, msg_len, msg);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+        }
+    }
+}
+
+errno_t pam_resp_otp_info(struct pam_data *pd,
+                          const char *otp_vendor,
+                          const char *otp_token_id,
+                          const char *otp_challenge)
+{
+    uint8_t *msg = NULL;
+    size_t msg_len;
+    int ret;
+    size_t vendor_len = 0;
+    size_t token_id_len = 0;
+    size_t challenge_len = 0;
+    size_t idx = 0;
+
+    msg_len = 3; /* Length of the components */
+
+    if (otp_vendor != NULL) {
+        vendor_len = strlen(otp_vendor);
+        msg_len += vendor_len;
+    }
+
+    if (otp_token_id != NULL) {
+        token_id_len = strlen(otp_token_id);
+        msg_len += token_id_len;
+    }
+
+    if (otp_challenge != NULL) {
+        challenge_len = strlen(otp_challenge);
+        msg_len += challenge_len;
+    }
+
+    msg = talloc_zero_size(pd, msg_len);
+    if (msg == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_size failed.\n");
+        return ENOMEM;
+    }
+
+    if (otp_vendor != NULL) {
+        memcpy(msg, otp_vendor, vendor_len);
+    }
+    idx += vendor_len +1;
+
+    if (otp_token_id != NULL) {
+        memcpy(msg + idx, otp_token_id, token_id_len);
+    }
+    idx += token_id_len +1;
+
+    if (otp_challenge != NULL) {
+        memcpy(msg + idx, otp_challenge, challenge_len);
+    }
+
+    ret = pam_add_response(pd, SSS_PAM_OTP_INFO, msg_len, msg);
+    talloc_zfree(msg);
+
+    return ret;
+}

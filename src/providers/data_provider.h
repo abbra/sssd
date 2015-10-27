@@ -216,6 +216,18 @@ int pam_add_response(struct pam_data *pd,
                      enum response_type type,
                      int len, const uint8_t *data);
 
+void pam_resp_grace_login(struct pam_data *pd, uint32_t grace);
+void pam_resp_expired_login(struct pam_data *pd, uint32_t expire);
+void pam_resp_srv_msg(struct pam_data *pd, const char *str_msg);
+
+/* Unlike other pam_resp* function, failure of this one must
+ * be fatal
+ */
+errno_t pam_resp_otp_info(struct pam_data *pd,
+                          const char *otp_vendor,
+                          const char *otp_token_id,
+                          const char *otp_challenge);
+
 bool dp_pack_pam_request(DBusMessage *msg, struct pam_data *pd);
 bool dp_unpack_pam_request(DBusMessage *msg, TALLOC_CTX *mem_ctx,
                            struct pam_data **new_pd, DBusError *dbus_error);

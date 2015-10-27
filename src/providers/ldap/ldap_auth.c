@@ -181,48 +181,24 @@ static errno_t check_pwexpire_ldap(struct pam_data *pd,
                                    struct sdap_ppolicy_data *ppolicy,
                                    int pwd_exp_warning)
 {
-    int ret = EOK;
-
     if (ppolicy->grace >= 0 || ppolicy->expire > 0) {
-        uint32_t *data;
-        uint32_t *ptr;
-
         if (pwd_exp_warning < 0) {
             pwd_exp_warning = 0;
         }
 
-        data = talloc_size(pd, 2* sizeof(uint32_t));
-        if (data == NULL) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "talloc_size failed.\n");
-            return ENOMEM;
-        }
-
-        ptr = data;
         if (ppolicy->grace >= 0) {
-            *ptr = SSS_PAM_USER_INFO_GRACE_LOGIN;
-            ptr++;
-            *ptr = ppolicy->grace;
+            pam_resp_grace_login(pd, ppolicy->grace);
         } else if (ppolicy->expire > 0) {
             if (pwd_exp_warning != 0 && ppolicy->expire > pwd_exp_warning) {
                 /* do not warn */
-                goto done;
+                return EOK;
             }
 
-            /* send warning */
-            *ptr = SSS_PAM_USER_INFO_EXPIRE_WARN;
-            ptr++;
-            *ptr = ppolicy->expire;
-        }
-
-        ret = pam_add_response(pd, SSS_PAM_USER_INFO, 2* sizeof(uint32_t),
-                               (uint8_t*)data);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+            pam_resp_grace_login(pd, ppolicy->expire);
         }
     }
 
-done:
-    return ret;
+    return EOK;
 }
 
 errno_t check_pwexpire_policy(enum pwexpire pw_expire_type,
@@ -1073,19 +1049,7 @@ static void sdap_auth4chpass_done(struct tevent_req *req)
     case ERR_AUTH_DENIED:
     case ERR_AUTH_FAILED:
         state->pd->pam_status = PAM_AUTH_ERR;
-        ret = pack_user_info_chpass_error(state->pd, "Old password not accepted.",
-                                          &msg_len, &msg);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "pack_user_info_chpass_error failed.\n");
-        } else {
-            ret = pam_add_response(state->pd, SSS_PAM_USER_INFO, msg_len,
-                                    msg);
-            if (ret != EOK) {
-               DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-            }
-        }
-
+        pam_resp_srv_msg(state->pd, "Old password not accepted");
         break;
     case ETIMEDOUT:
     case ERR_NETWORK_IO:
@@ -1134,17 +1098,7 @@ static void sdap_pam_chpass_done(struct tevent_req *req)
     }
 
     if (state->pd->pam_status != PAM_SUCCESS && user_error_message != NULL) {
-        ret = pack_user_info_chpass_error(state->pd, user_error_message,
-                                            &msg_len, &msg);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "pack_user_info_chpass_error failed.\n");
-        } else {
-            ret = pam_add_response(state->pd, SSS_PAM_USER_INFO, msg_len,
-                                    msg);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-            }
-        }
+        pam_resp_srv_msg(state->pd, user_error_message);
     }
 
     if (state->pd->pam_status == PAM_SUCCESS &&

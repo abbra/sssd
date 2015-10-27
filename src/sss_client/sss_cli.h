@@ -324,7 +324,9 @@ enum sss_authtok_type {
 #define SSS_START_OF_PAM_REQUEST 0x4d415049
 #define SSS_END_OF_PAM_REQUEST 0x4950414d
 
+#ifndef UNIT_TESTING
 #define PAM_PREAUTH_INDICATOR PUBCONF_PATH"/pam_preauth_available"
+#endif
 
 enum pam_item_type {
     SSS_PAM_ITEM_EMPTY = 0x0000,
