@@ -14,7 +14,6 @@ AM_CPPFLAGS = \
 
 TESTS_ENVIRONMENT = \
     CWRAP_TEST_SRCDIR=$(abs_srcdir) \
-    . $(srcdir)/cwrap_test_setup.sh; \
     $(AUX_TESTS_ENVIRONMENT) \
     $(NULL)
 
@@ -64,8 +63,13 @@ endif # HAVE_PAM_WRAPPER
 
 endif # HAVE_CMOCKA
 
-TESTS = $(check_PROGRAMS) \
-        $(NULL)
+TESTS = \
+    become_user-tests.sh \
+    server-tests.sh \
+    usertools-tests.sh \
+    responder_common-tests.sh \
+    pam_sss-tests.sh \
+    $(NULL)
 
 become_user_tests_SOURCES = \
     test_become_user.c \
