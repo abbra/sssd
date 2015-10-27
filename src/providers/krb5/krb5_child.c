@@ -1425,14 +1425,7 @@ static errno_t changepw_child(struct krb5_req *kr, bool prelim)
     krb5_free_cred_contents(kr->ctx, kr->creds);
 
     if (kr->otp == true) {
-        user_info_type = SSS_PAM_USER_INFO_OTP_CHPASS;
-        ret = pam_add_response(kr->pd, SSS_PAM_USER_INFO, sizeof(uint32_t),
-                               (const uint8_t *) &user_info_type);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-            /* Not fatal */
-        }
-
+        pam_resp_otp_chpass(kr->pd);
         sss_authtok_set_empty(kr->pd->newauthtok);
         return map_krb5_error(kerr);
     }

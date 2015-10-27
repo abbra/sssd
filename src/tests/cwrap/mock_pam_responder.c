@@ -300,6 +300,10 @@ static int mock_pam_chauthtok(struct pam_data *pd)
         pam_resp_srv_msg(pd, "Test server message");
         pd->pam_status = PAM_AUTH_ERR;
         ret = EOK;
+    } else if (strcmp(pd->user, "otpuser") == 0) {
+        pam_resp_otp_chpass(pd);
+        pd->pam_status = PAM_SUCCESS;
+        ret = EOK;
     }
 
     return ret;

@@ -328,3 +328,18 @@ errno_t pam_resp_otp_info(struct pam_data *pd,
 
     return ret;
 }
+
+void pam_resp_otp_chpass(struct pam_data *pd)
+{
+    errno_t ret;
+    uint32_t user_info_type;
+
+    user_info_type = SSS_PAM_USER_INFO_OTP_CHPASS;
+    ret = pam_add_response(pd, SSS_PAM_USER_INFO, sizeof(uint32_t),
+                           (const uint8_t *) &user_info_type);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
+        /* Not fatal */
+    }
+}
+
