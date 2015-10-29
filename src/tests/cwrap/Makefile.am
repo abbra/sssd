@@ -57,6 +57,7 @@ if HAVE_PAM_WRAPPER
 if HAVE_LIBPAMTEST
 check_PROGRAMS += \
     pam_sss_wrapper-tests \
+    pam_sss_root_wrapper-tests \
     $(NULL)
 endif # HAVE_LIBPAMTEST
 endif # HAVE_PAM_WRAPPER
@@ -69,6 +70,7 @@ TESTS = \
     usertools-tests.sh \
     responder_common-tests.sh \
     pam_sss-tests.sh \
+    pam_sss_root-tests.sh \
     $(NULL)
 
 become_user_tests_SOURCES = \
@@ -181,15 +183,13 @@ responder_common_tests_LDADD = \
     $(abs_top_builddir)/libsss_test_common.la \
     $(NULL)
 
-pam_sss_wrapper_tests_SOURCES = \
-    test_wrapper_pam_sss.c \
-    $(NULL)
-pam_sss_wrapper_tests_CFLAGS = \
+PAM_WRAPPER_TEST_FLGS = \
     $(AM_CFLAGS) \
     -DUNIT_TESTING \
     -DPAM_PREAUTH_INDICATOR=TEST_DIR\"/pam_preauth_available\" \
     $(NULL)
-pam_sss_wrapper_tests_LDADD = \
+
+PAM_WRAPPER_TEST_LBS = \
     $(CMOCKA_LIBS) \
     $(TALLOC_LIBS) \
     $(POPT_LIBS) \
@@ -198,6 +198,26 @@ pam_sss_wrapper_tests_LDADD = \
     $(abs_top_builddir)/libsss_util.la \
     $(abs_top_builddir)/libsss_debug.la \
     $(abs_top_builddir)/libsss_test_common.la \
+    $(NULL)
+
+pam_sss_wrapper_tests_SOURCES = \
+    test_wrapper_pam_sss.c \
+    $(NULL)
+pam_sss_wrapper_tests_CFLAGS = \
+    $(PAM_WRAPPER_TEST_FLGS) \
+    $(NULL)
+pam_sss_wrapper_tests_LDADD = \
+    $(PAM_WRAPPER_TEST_LBS) \
+    $(NULL)
+
+pam_sss_root_wrapper_tests_SOURCES = \
+    test_root_wrapper_pam_sss.c \
+    $(NULL)
+pam_sss_root_wrapper_tests_CFLAGS = \
+    $(PAM_WRAPPER_TEST_FLGS) \
+    $(NULL)
+pam_sss_root_wrapper_tests_LDADD = \
+    $(PAM_WRAPPER_TEST_LBS) \
     $(NULL)
 
 tests: $(check_PROGRAMS)
