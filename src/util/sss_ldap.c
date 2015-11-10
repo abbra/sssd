@@ -301,6 +301,7 @@ struct sss_ldap_init_state {
 
 #ifdef HAVE_LDAP_INIT_FD
     struct tevent_timer *connect_timeout;
+    int timeout;
 #endif
 };
 
@@ -346,6 +347,7 @@ struct tevent_req *sss_ldap_init_send(TALLOC_CTX *mem_ctx,
     struct tevent_req *subreq;
     struct timeval tv;
 
+    state->timeout = timeout;
     state->sd = socket(addr->ss_family, SOCK_STREAM, 0);
     if (state->sd == -1) {
         ret = errno;
@@ -424,6 +426,88 @@ static void sdap_async_sys_connect_timeout(struct tevent_context *ev,
     tevent_req_error(connection_request, ETIMEDOUT);
 }
 
+static int set_socket_timeout(LDAP *ld, time_t sec, suseconds_t usec)
+{
+    struct timeval tv;
+    int ret;
+    int sd;
+
+    /* get the socket */
+    ret = ldap_get_option(ld, LDAP_OPT_DESC, &sd);
+    if (ret != LDAP_SUCCESS) {
+        return ret;
+    }
+
+    /* ignore invalid (probably closed) file descriptors */
+    if (sd <= 0) {
+        return LDAP_SUCCESS;
+    }
+
+    /* set timeouts */
+    memset(&tv, 0, sizeof(tv));
+    tv.tv_sec = sec;
+    tv.tv_usec = usec;
+
+    ret = setsockopt(sd, SOL_SOCKET, SO_RCVTIMEO, (void *) &tv, sizeof(tv));
+    if (ret != 0) {
+        return LDAP_LOCAL_ERROR;
+    }
+
+    ret = setsockopt(sd, SOL_SOCKET, SO_SNDTIMEO, (void *)&tv, sizeof(tv));
+    if (ret != 0) {
+        return LDAP_LOCAL_ERROR;
+    }
+
+    return LDAP_SUCCESS;
+}
+
+int tls_cb(LDAP *ld, void *ssl, void *ctx, void *arg)
+{
+    int timeout;
+
+    if (arg) {
+        timeout = *((int *) arg);
+    } else {
+        timeout = 5; /* Shouldn't happen */
+    }
+
+    /* set timeout options on socket to avoid hang in some cases (a little
+       more than the normal timeout so this should only be triggered in cases
+       where the library behaves incorrectly) */
+    if (timeout) {
+        set_socket_timeout(ld, timeout, 500000);
+    }
+    return LDAP_SUCCESS;
+}
+
+static int sss_install_tls(LDAP *ld, int timeout)
+{
+    int ret;
+
+    ldap_set_option(ld, LDAP_OPT_X_TLS_CONNECT_ARG, &timeout);
+    ldap_set_option(ld, LDAP_OPT_X_TLS_CONNECT_CB, &tls_cb);
+
+    ret = ldap_install_tls(ld);
+    if (ret != LDAP_SUCCESS) {
+        if (ret == LDAP_LOCAL_ERROR) {
+            DEBUG(SSSDBG_FUNC_DATA, "TLS/SSL already in place.\n");
+        } else {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "ldap_install_tls failed: %s\n",
+                  sss_ldap_err2string(ret));
+            return EIO;
+        }
+    }
+
+    ret = ldap_install_tls(ld);
+    if (ret != LDAP_LOCAL_ERROR) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "TLS still not installed!\n");
+        return EIO;
+    }
+
+    return EOK;
+}
+
 static void sss_ldap_init_sys_connect_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
@@ -455,16 +539,12 @@ static void sss_ldap_init_sys_connect_done(struct tevent_req *subreq)
     }
 
     if (ldap_is_ldaps_url(state->uri)) {
-        lret = ldap_install_tls(state->ldap);
-        if (lret != LDAP_SUCCESS) {
-            if (lret == LDAP_LOCAL_ERROR) {
-                DEBUG(SSSDBG_FUNC_DATA, "TLS/SSL already in place.\n");
-            } else {
-                DEBUG(SSSDBG_CRIT_FAILURE, "ldap_install_tls failed: %s\n",
-                          sss_ldap_err2string(lret));
-                ret = EIO;
-                goto fail;
-            }
+        ret = sss_install_tls(state->ldap, state->timeout);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "sss_install_tls failed [%d]: %s\n",
+                  ret, sss_strerror(ret));
+            goto fail;
         }
     }
 
