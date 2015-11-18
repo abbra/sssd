@@ -3021,6 +3021,11 @@ libsss_ad_la_SOURCES += \
     src/providers/ad/ad_sudo.c
 endif
 
+if BUILD_AUTOFS
+libsss_ad_la_SOURCES += \
+    src/providers/ad/ad_autofs.c
+endif
+
 libsss_ad_la_CFLAGS = \
     $(AM_CFLAGS) \
     $(OPENLDAP_CFLAGS) \
