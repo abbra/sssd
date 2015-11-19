@@ -179,6 +179,12 @@ int ldap_get_autofs_options(TALLOC_CTX *memctx,
                             const char *conf_path,
                             struct sdap_options *opts);
 
+/* Returns true if LDAP provider runs with autofs default
+ * mappings. See upstream ticket #2858.
+ */
+bool ldap_ad_autofs_schema_defaults(struct confdb_ctx *cdb,
+                                    const char *conf_path);
+
 /* Calling ldap_setup_enumeration will set up a periodic task
  * that would periodically call send_fn/recv_fn request. The
  * send_fn's pvt parameter will be a pointer to ldap_enum_ctx

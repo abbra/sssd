@@ -509,6 +509,24 @@ int sssm_ldap_autofs_init(struct be_ctx *be_ctx,
         return EIO;
     }
 
+    if (id_ctx->opts->schema_type == SDAP_SCHEMA_AD) {
+        if (ldap_ad_autofs_schema_defaults(be_ctx->cdb,
+                                           be_ctx->conf_path)) {
+        DEBUG(SSSDBG_IMPORTANT_INFO,
+              "Your configuration uses the ldap provider "
+              "with schema set to \"ad\" and default autofs attribute "
+              "mappings. The default map will change in the next release, "
+              "please make sure the sssd configuration explicitly matches "
+              "the server attributes.");
+        sss_log(SSS_LOG_NOTICE,
+                _("Your configuration uses the ldap provider "
+                  "with schema set to \"ad\" and default autofs attribute "
+                  "mappings. The default map will change in the next release, "
+                  "please make sure the sssd configuration explicitly matches "
+                  "the server attributes."));
+        }
+    }
+
     return sdap_autofs_init(be_ctx, id_ctx, ops, pvt_data);
 #else
     DEBUG(SSSDBG_MINOR_FAILURE, "Autofs init handler called but SSSD is "

@@ -453,6 +453,21 @@ static bool ldap_rfc2307_autofs_defaults(struct confdb_ctx *cdb,
     return has_defaults(cdb, conf_path, attrs);
 }
 
+bool ldap_ad_autofs_schema_defaults(struct confdb_ctx *cdb,
+                                    const char *conf_path)
+{
+    const char *attrs[] = {
+        rfc2307bis_autofs_entry_map[SDAP_OC_AUTOFS_ENTRY].name,
+        rfc2307bis_autofs_entry_map[SDAP_AT_AUTOFS_ENTRY_KEY].name,
+        rfc2307bis_autofs_entry_map[SDAP_AT_AUTOFS_ENTRY_VALUE].name,
+        rfc2307bis_autofs_mobject_map[SDAP_OC_AUTOFS_MAP].name,
+        rfc2307bis_autofs_mobject_map[SDAP_AT_AUTOFS_MAP_NAME].name,
+        NULL,
+    };
+
+    return has_defaults(cdb, conf_path, attrs);
+}
+
 int ldap_get_autofs_options(TALLOC_CTX *memctx,
                             struct confdb_ctx *cdb,
                             const char *conf_path,
