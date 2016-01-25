@@ -934,7 +934,9 @@ search_user_or_group_by_sid_str(TALLOC_CTX *mem_ctx,
     errno_t ret;
     enum sysdb_member_type member_type;
     struct ldb_message *msg = NULL;
-    const char *attrs[] = { SYSDB_SID_STR,
+    const char *attrs[] = { SYSDB_NAME,
+                            SYSDB_SID_STR,
+                            SYSDB_ORIG_DN,
                             SYSDB_OBJECTCLASS,
                             NULL };
     struct sysdb_attrs **members;
@@ -1081,12 +1083,6 @@ static void ipa_ext_group_member_done(struct tevent_req *subreq)
     int err_maj;
     int err_min;
     const char *err_msg;
-    const char *attrs[] = { SYSDB_NAME,
-                            SYSDB_SID_STR,
-                            SYSDB_OBJECTCLASS,
-                            NULL };
-    struct ldb_message *msg;
-    struct sysdb_attrs **members;
 
     ret = be_get_account_info_recv(subreq, state,
                                    &err_maj, &err_min, &err_msg);
@@ -1098,20 +1094,11 @@ static void ipa_ext_group_member_done(struct tevent_req *subreq)
         return;
     }
 
-    ret = sysdb_search_user_by_sid_str(state, state->dom,
-                                       state->ext_member,
-                                       attrs, &msg);
-    if (ret == EOK) {
-        state->member_type = SYSDB_MEMBER_USER;
-    } else if (ret == ENOENT) {
-        ret = sysdb_search_group_by_sid_str(state, state->dom,
-                                            state->ext_member,
-                                            attrs, &msg);
-        if (ret == EOK) {
-            state->member_type = SYSDB_MEMBER_GROUP;
-        }
-    }
-
+    ret = search_user_or_group_by_sid_str(state,
+                                          state->dom,
+                                          state->ext_member,
+                                          &state->member_type,
+                                          &state->member);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
               "Could not find %s in sysdb [%d]: %s\n",
@@ -1120,22 +1107,13 @@ static void ipa_ext_group_member_done(struct tevent_req *subreq)
         return;
     }
 
-    ret = sysdb_msg2attrs(state, 1, &msg, &members);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE,
-              "Could not convert result to sysdb_attrs [%d]: %s\n",
-              ret, sss_strerror(ret));
-        tevent_req_error(req, ret);
-        return;
-    }
-
-    state->member = members[0];
     tevent_req_done(req);
 }
 
 errno_t ipa_ext_group_member_recv(TALLOC_CTX *mem_ctx,
                                   struct tevent_req *req,
                                   enum sysdb_member_type *_member_type,
+                                  struct sss_domain_info **_dom,
                                   struct sysdb_attrs **_member)
 {
     struct ipa_ext_member_state *state = tevent_req_data(req,
@@ -1144,6 +1122,10 @@ errno_t ipa_ext_group_member_recv(TALLOC_CTX *mem_ctx,
 
     if (_member_type != NULL) {
         *_member_type = state->member_type;
+    }
+
+    if (_dom) {
+        *_dom = state->dom;
     }
 
     if (_member != NULL) {

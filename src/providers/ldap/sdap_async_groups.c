@@ -2391,14 +2391,14 @@ static void sdap_nested_done(struct tevent_req *subreq)
     }
     in_transaction = false;
 
-    if (state->missing_external == NULL) {
+    if (hash_count(state->missing_external) == 0) {
         /* No external members. Processing complete */
         tevent_req_done(req);
         return;
     }
 
-    /* At the moment, we need to save the direct groups & members in one transaction
-     * and then query the others in a separate requests
+    /* At the moment, we need to save the direct groups & members in one
+     * transaction and then query the others in a separate requests
      */
     subreq = sdap_nested_group_lookup_external_send(state, state->ev,
                                                     state->dom,

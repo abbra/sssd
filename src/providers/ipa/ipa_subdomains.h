@@ -145,6 +145,7 @@ struct tevent_req *ipa_ext_group_member_send(TALLOC_CTX *mem_ctx,
 errno_t ipa_ext_group_member_recv(TALLOC_CTX *mem_ctx,
                                   struct tevent_req *req,
                                   enum sysdb_member_type *_member_type,
+                                  struct sss_domain_info **_dom,
                                   struct sysdb_attrs **_member);
 
 errno_t
