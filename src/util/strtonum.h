@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+uint64_t strtouint64(const char *nptr, char **endptr, int base);
+
 int32_t strtoint32(const char *nptr, char **endptr, int base);
 uint32_t strtouint32(const char *nptr, char **endptr, int base);
 
