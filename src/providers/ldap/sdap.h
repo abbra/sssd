@@ -432,19 +432,13 @@ typedef errno_t
 (*ext_member_recv_fn_t)(TALLOC_CTX *mem_ctx,
                         struct tevent_req *req,
                         enum sysdb_member_type *member_type,
+                        struct sss_domain_info **_dom,
                         struct sysdb_attrs **_member);
-
-typedef errno_t
-(*ext_member_check_fn_t)(const char *ext_member,
-                         void *pvt,
-                         enum sysdb_member_type *member_type,
-                         struct sysdb_attrs **_member);
 
 struct sdap_ext_member_ctx {
     /* Typically ID context of the external ID provider */
     void *pvt;
 
-    ext_member_check_fn_t ext_member_check;
     ext_member_send_fn_t ext_member_resolve_send;
     ext_member_recv_fn_t ext_member_resolve_recv;
 };
