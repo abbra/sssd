@@ -64,6 +64,7 @@ struct sdap_nested_group_ctx {
     struct sdap_handle *sh;
     hash_table_t *users;
     hash_table_t *groups;
+    hash_table_t *missing_external;
     bool try_deref;
     int deref_treshold;
     int max_nesting_level;
@@ -184,26 +185,20 @@ done:
     return ret;
 }
 
-static errno_t sdap_nested_group_hash_entry(hash_table_t *table,
-                                            struct sysdb_attrs *entry,
-                                            const char *table_name)
+static errno_t sdap_nested_group_hash_insert(hash_table_t *table,
+                                             const char *entry_key,
+                                             void *entry_value,
+                                             const char *table_name)
 {
     hash_key_t key;
     hash_value_t value;
-    const char *name = NULL;
-    errno_t ret;
     int hret;
 
-    ret = sysdb_attrs_get_string(entry, SYSDB_ORIG_DN, &name);
-    if (ret != EOK) {
-        return ret;
-    }
-
     DEBUG(SSSDBG_TRACE_ALL, "Inserting [%s] into hash table [%s]\n",
-                             name, table_name);
+                             entry_key, table_name);
 
     key.type = HASH_KEY_STRING;
-    key.str = talloc_strdup(NULL, name);
+    key.str = talloc_strdup(NULL, entry_key);
     if (key.str == NULL) {
         return ENOMEM;
     }
@@ -214,7 +209,7 @@ static errno_t sdap_nested_group_hash_entry(hash_table_t *table,
     }
 
     value.type = HASH_VALUE_PTR;
-    value.ptr = entry;
+    value.ptr = entry_value;
 
     hret = hash_enter(table, &key, &value);
     if (hret != HASH_SUCCESS) {
@@ -226,6 +221,21 @@ static errno_t sdap_nested_group_hash_entry(hash_table_t *table,
     talloc_steal(table, value.ptr);
 
     return EOK;
+}
+
+static errno_t sdap_nested_group_hash_entry(hash_table_t *table,
+                                            struct sysdb_attrs *entry,
+                                            const char *table_name)
+{
+    const char *name = NULL;
+    errno_t ret;
+
+    ret = sysdb_attrs_get_string(entry, SYSDB_ORIG_DN, &name);
+    if (ret != EOK) {
+        return ret;
+    }
+
+    return sdap_nested_group_hash_insert(table, name, entry, table_name);
 }
 
 static errno_t
@@ -478,6 +488,13 @@ sdap_nested_group_split_members(TALLOC_CTX *mem_ctx,
     errno_t ret;
     int i;
 
+    if (members == NULL) {
+        *_missing = NULL;
+        *_num_missing = 0;
+        *_num_groups = 0;
+        return EOK;
+    }
+
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "talloc_new() failed\n");
@@ -619,6 +636,98 @@ done:
     return ret;
 }
 
+static errno_t
+sdap_nested_group_lookup_external_hash(struct sdap_nested_group_ctx *group_ctx,
+                                       enum sysdb_member_type member_type,
+                                       struct sysdb_attrs *member)
+{
+    errno_t ret;
+
+    switch (member_type) {
+    case SYSDB_MEMBER_USER:
+        ret = sdap_nested_group_hash_entry(group_ctx->users, member, "users");
+    case SYSDB_MEMBER_GROUP:
+        ret = sdap_nested_group_hash_entry(group_ctx->groups, member, "groups");
+    default:
+        ret = EINVAL;
+    }
+
+    return ret;
+}
+
+static errno_t
+sdap_nested_group_check_ext_members(TALLOC_CTX *mem_ctx,
+                                    struct sdap_nested_group_ctx *group_ctx,
+                                    struct ldb_message_element *ext_members)
+{
+    errno_t ret;
+    struct sdap_ext_member_ctx *ext_ctx = NULL;
+    enum sysdb_member_type member_type;
+    struct sysdb_attrs *member = NULL;
+    const char *ext_member_attr;
+
+    if (ext_members == NULL) {
+        return EOK;
+    }
+
+    ext_ctx = group_ctx->opts->ext_ctx;
+    if (ext_ctx == NULL) {
+        return EINVAL;
+    }
+
+    for (size_t i = 0; i < ext_members->num_values; i++) {
+        ext_member_attr = (const char *) ext_members->values->data;
+        ret = ext_ctx->ext_member_check(ext_member_attr, ext_ctx->pvt,
+                                        &member_type, &member);
+        switch (ret) {
+            case EOK:
+                /* This member is cached and valid */
+                ret = sdap_nested_group_lookup_external_hash(group_ctx,
+                                                             member_type,
+                                                             member);
+                break;
+            case ENOENT:
+                /* This member is not cached at all */
+            case EAGAIN:
+                /* This member is cached but expired, fall through */
+                ret = sdap_nested_group_hash_insert(group_ctx->missing_external,
+                                                    ext_member_attr,
+                                                    NULL, /* Unknown member */
+                                                    "missing external members");
+                if (ret != EOK) {
+                    return ret;
+                }
+            default:
+                /* Failure */
+                return ret;
+        }
+    }
+
+    return EOK;
+}
+
+static struct ldb_message_element *
+sdap_nested_group_ext_members(struct sdap_options *opts,
+                              struct sysdb_attrs *group)
+{
+    errno_t ret;
+    struct ldb_message_element *ext_members = NULL;
+
+    if (opts->ext_ctx == NULL) {
+        return NULL;
+    }
+
+    ret = sysdb_attrs_get_el_ext(group,
+                 opts->group_map[SDAP_AT_GROUP_EXT_MEMBER].sys_name,
+                 false, &ext_members);
+    if (ret != EOK && ret != ENOENT) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to retrieve external member list "
+                                   "[%d]: %s\n", ret, sss_strerror(ret));
+    }
+
+    return ext_members;
+}
+
 
 struct sdap_nested_group_state {
     struct sdap_nested_group_ctx *group_ctx;
@@ -661,6 +770,14 @@ sdap_nested_group_send(TALLOC_CTX *mem_ctx,
     }
 
     ret = sss_hash_create(state->group_ctx, 32, &state->group_ctx->groups);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create hash table [%d]: %s\n",
+                                    ret, strerror(ret));
+        goto immediately;
+    }
+
+    ret = sss_hash_create(state->group_ctx, 32,
+                          &state->group_ctx->missing_external);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create hash table [%d]: %s\n",
                                     ret, strerror(ret));
@@ -760,7 +877,8 @@ errno_t sdap_nested_group_recv(TALLOC_CTX *mem_ctx,
                                unsigned long *_num_users,
                                struct sysdb_attrs ***_users,
                                unsigned long *_num_groups,
-                               struct sysdb_attrs ***_groups)
+                               struct sysdb_attrs ***_groups,
+                               hash_table_t **_missing_external)
 {
     struct sdap_nested_group_state *state = NULL;
     struct sysdb_attrs **users = NULL;
@@ -807,6 +925,11 @@ errno_t sdap_nested_group_recv(TALLOC_CTX *mem_ctx,
         *_groups = talloc_steal(mem_ctx, groups);
     }
 
+    if (_missing_external) {
+        *_missing_external = talloc_steal(mem_ctx,
+                                          state->group_ctx->missing_external);
+    }
+
     return EOK;
 }
 
@@ -816,12 +939,15 @@ struct sdap_nested_group_process_state {
     struct sdap_nested_group_member *missing;
     int num_missing_total;
     int num_missing_groups;
+    struct ldb_message_element *ext_members;
+    struct ldb_message_element *members;
     int nesting_level;
     char *group_dn;
     bool deref;
 };
 
-static void sdap_nested_group_process_done(struct tevent_req *subreq);
+static errno_t sdap_nested_group_process_members_step(struct tevent_req *req);
+static void sdap_nested_group_process_members_done(struct tevent_req *subreq);
 
 static struct tevent_req *
 sdap_nested_group_process_send(TALLOC_CTX *mem_ctx,
@@ -833,9 +959,7 @@ sdap_nested_group_process_send(TALLOC_CTX *mem_ctx,
     struct sdap_nested_group_process_state *state = NULL;
     struct sdap_attr_map *group_map = NULL;
     struct tevent_req *req = NULL;
-    struct tevent_req *subreq = NULL;
-    struct ldb_message_element *members = NULL;
-    const char *orig_dn = NULL;
+    const char *orig_dn;
     errno_t ret;
 
     req = tevent_req_create(mem_ctx, &state,
@@ -866,21 +990,26 @@ sdap_nested_group_process_send(TALLOC_CTX *mem_ctx,
 
     DEBUG(SSSDBG_TRACE_INTERNAL, "About to process group [%s]\n", orig_dn);
 
-    /* get member list */
+    /* get member list, both direct and external */
+    state->ext_members = sdap_nested_group_ext_members(state->group_ctx->opts,
+                                                       group);
+
     ret = sysdb_attrs_get_el_ext(group, group_map[SDAP_AT_GROUP_MEMBER].sys_name,
-                                 false, &members);
-    if (ret == ENOENT) {
-        ret = EOK; /* no members */
+                                 false, &state->members);
+    if (ret == ENOENT && state->ext_members == NULL) {
+        ret = EOK; /* no members, direct or external */
         goto immediately;
-    } else if (ret != EOK) {
+    } else if (ret != EOK && ret != ENOENT) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to retrieve member list "
                                     "[%d]: %s\n", ret, strerror(ret));
         goto immediately;
     }
 
     /* get members that need to be refreshed */
-    ret = sdap_nested_group_split_members(state, state->group_ctx,
-                                          state->nesting_level, members,
+    ret = sdap_nested_group_split_members(state,
+                                          state->group_ctx,
+                                          state->nesting_level,
+                                          state->members,
                                           &state->missing,
                                           &state->num_missing_total,
                                           &state->num_missing_groups);
@@ -890,39 +1019,31 @@ sdap_nested_group_process_send(TALLOC_CTX *mem_ctx,
         goto immediately;
     }
 
-    DEBUG(SSSDBG_TRACE_INTERNAL, "Looking up %d/%d members of group [%s]\n",
-          state->num_missing_total, members->num_values, orig_dn);
+    ret = sdap_nested_group_check_ext_members(state,
+                                              state->group_ctx,
+                                              state->ext_members);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to split external member list "
+                                    "[%d]: %s\n", ret, sss_strerror(ret));
+        goto immediately;
+    }
 
-    if (state->num_missing_total == 0) {
+    if (state->num_missing_total == 0
+            && hash_count(state->group_ctx->missing_external) == 0) {
         ret = EOK; /* we're done */
         goto immediately;
     }
 
-    /* process members */
-    if (group_ctx->try_deref
-            && state->num_missing_total > group_ctx->deref_treshold) {
-        DEBUG(SSSDBG_TRACE_INTERNAL, "Dereferencing members of group [%s]\n",
-                                      orig_dn);
-        state->deref = true;
-        subreq = sdap_nested_group_deref_send(state, ev, group_ctx, members,
-                                              orig_dn,
-                                              state->nesting_level);
-    } else {
-        DEBUG(SSSDBG_TRACE_INTERNAL, "Members of group [%s] will be "
-                                      "processed individually\n", orig_dn);
-        state->deref = false;
-        subreq = sdap_nested_group_single_send(state, ev, group_ctx,
-                                               state->missing,
-                                               state->num_missing_total,
-                                               state->num_missing_groups,
-                                               state->nesting_level);
-    }
-    if (subreq == NULL) {
-        ret = ENOMEM;
+    ret = sdap_nested_group_process_members_step(req);
+    if (ret == EOK) {
         goto immediately;
     }
 
-    tevent_req_set_callback(subreq, sdap_nested_group_process_done, req);
+    if (ret != EAGAIN) {
+        DEBUG(SSSDBG_OP_FAILURE, "Error checking members [%d]: %s\n",
+                                 ret, strerror(ret));
+        goto immediately;
+    }
 
     return req;
 
@@ -937,7 +1058,54 @@ immediately:
     return req;
 }
 
-static void sdap_nested_group_process_done(struct tevent_req *subreq)
+static errno_t sdap_nested_group_process_members_step(struct tevent_req *req)
+{
+    struct tevent_req *subreq = NULL;
+    struct sdap_nested_group_process_state *state = NULL;
+
+    state = tevent_req_data(req, struct sdap_nested_group_process_state);
+
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Looking up %d/%d members of group [%s]\n",
+                                 state->num_missing_total,
+                                 state->members->num_values,
+                                 state->group_dn);
+
+    /* process members */
+    if (state->group_ctx->try_deref
+            && state->num_missing_total > state->group_ctx->deref_treshold) {
+        DEBUG(SSSDBG_TRACE_INTERNAL, "Dereferencing members of group [%s]\n",
+                                      state->group_dn);
+        state->deref = true;
+        subreq = sdap_nested_group_deref_send(state,
+                                              state->ev,
+                                              state->group_ctx,
+                                              state->members,
+                                              state->group_dn,
+                                              state->nesting_level);
+    } else {
+        DEBUG(SSSDBG_TRACE_INTERNAL, "Members of group [%s] will be "
+                                      "processed individually\n",
+                                      state->group_dn);
+        state->deref = false;
+        subreq = sdap_nested_group_single_send(state,
+                                               state->ev,
+                                               state->group_ctx,
+                                               state->missing,
+                                               state->num_missing_total,
+                                               state->num_missing_groups,
+                                               state->nesting_level);
+    }
+    if (subreq == NULL) {
+        return ENOMEM;
+    }
+
+    tevent_req_set_callback(subreq,
+                            sdap_nested_group_process_members_done,
+                            req);
+    return EAGAIN;
+}
+
+static void sdap_nested_group_process_members_done(struct tevent_req *subreq)
 {
     struct sdap_nested_group_process_state *state = NULL;
     struct tevent_req *req = NULL;
@@ -965,26 +1133,27 @@ static void sdap_nested_group_process_done(struct tevent_req *subreq)
                                                    state->num_missing_groups,
                                                    state->nesting_level);
             if (subreq == NULL) {
-                ret = ENOMEM;
-                goto done;
+                tevent_req_error(req, ENOMEM);
+                return;
             }
 
-            tevent_req_set_callback(subreq, sdap_nested_group_process_done,
+            tevent_req_set_callback(subreq,
+                                    sdap_nested_group_process_members_done,
                                     req);
-
-            ret = EAGAIN;
+            return;
         }
     } else {
         ret = sdap_nested_group_single_recv(subreq);
         talloc_zfree(subreq);
     }
 
-done:
-    if (ret == EOK) {
-        tevent_req_done(req);
-    } else if (ret != EAGAIN) {
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot retrieve group members\n");
         tevent_req_error(req, ret);
+        return;
     }
+
+    tevent_req_done(req);
 }
 
 static errno_t sdap_nested_group_process_recv(struct tevent_req *req)
@@ -2263,6 +2432,242 @@ static void sdap_nested_group_deref_done(struct tevent_req *subreq)
 }
 
 static errno_t sdap_nested_group_deref_recv(struct tevent_req *req)
+{
+    TEVENT_REQ_RETURN_ON_ERROR(req);
+
+    return EOK;
+}
+
+struct sdap_ext_member {
+    const char *ext_member_attr;
+
+    enum sysdb_member_type member_type;
+    struct sss_domain_info *dom;
+    struct sysdb_attrs *attrs;
+};
+
+struct sdap_nested_group_lookup_external_state {
+    struct tevent_context *ev;
+    struct sdap_ext_member_ctx *ext_ctx;
+    struct sss_domain_info *group_dom;
+    hash_table_t *missing_external;
+
+    hash_key_t *keys;
+    unsigned long n_keys;
+    unsigned long keyiter;
+    struct sdap_ext_member *ext_members;
+
+    ext_member_send_fn_t ext_member_resolve_send;
+    ext_member_recv_fn_t ext_member_resolve_recv;
+};
+
+static errno_t
+sdap_nested_group_lookup_external_step(struct tevent_req *req);
+static void
+sdap_nested_group_lookup_external_done(struct tevent_req *subreq);
+static errno_t
+sdap_nested_group_lookup_external_link(struct tevent_req *req);
+static errno_t
+sdap_nested_group_lookup_external_link_member(struct sdap_ext_member *member);
+
+struct tevent_req *
+sdap_nested_group_lookup_external_send(TALLOC_CTX *mem_ctx,
+                                       struct tevent_context *ev,
+                                       struct sss_domain_info *group_dom,
+                                       struct sdap_ext_member_ctx *ext_ctx,
+                                       hash_table_t *missing_external)
+{
+    struct sdap_nested_group_lookup_external_state *state = NULL;
+    struct tevent_req *req = NULL;
+    errno_t ret;
+
+    req = tevent_req_create(mem_ctx, &state,
+                            struct sdap_nested_group_lookup_external_state);
+    if (req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "tevent_req_create() failed\n");
+        return NULL;
+    }
+
+    state->ev = ev;
+    state->group_dom = group_dom;
+    state->ext_ctx = ext_ctx;
+    state->missing_external = missing_external;
+
+    if (state->ext_ctx->ext_member_resolve_send == NULL
+            || state->ext_ctx->ext_member_resolve_recv == NULL) {
+        ret = EINVAL;
+        goto immediately;
+    }
+
+    ret = hash_keys(state->missing_external,
+                    &state->n_keys, &state->keys);
+    if (ret != HASH_SUCCESS) {
+        ret = EIO;
+        goto immediately;
+    }
+    state->keyiter = 0;
+
+    state->ext_members = talloc_zero_array(state,
+                                           struct sdap_ext_member,
+                                           state->n_keys);
+    if (state->ext_members == NULL) {
+        ret = ENOMEM;
+        goto immediately;
+    }
+
+    ret = sdap_nested_group_lookup_external_step(req);
+    if (ret != EAGAIN) {
+        goto immediately;
+    }
+
+    return req;
+
+immediately:
+    if (ret == EOK) {
+        tevent_req_done(req);
+    } else {
+        tevent_req_error(req, ret);
+    }
+    tevent_req_post(req, ev);
+    return req;
+}
+
+static errno_t
+sdap_nested_group_lookup_external_step(struct tevent_req *req)
+{
+    struct tevent_req *subreq = NULL;
+    struct sdap_nested_group_lookup_external_state *state = NULL;
+    state = tevent_req_data(req,
+                            struct sdap_nested_group_lookup_external_state);
+
+    subreq = state->ext_ctx->ext_member_resolve_send(state,
+                                                     state->ev,
+                                                     state->keys[state->keyiter].str,
+                                                     state->ext_ctx->pvt);
+    if (subreq == NULL) {
+        return ENOMEM;
+    }
+    tevent_req_set_callback(subreq,
+                            sdap_nested_group_lookup_external_done,
+                            req);
+
+    return EAGAIN;
+}
+
+static void
+sdap_nested_group_lookup_external_done(struct tevent_req *subreq)
+{
+    errno_t ret;
+    struct tevent_req *req = NULL;
+    struct sdap_nested_group_lookup_external_state *state = NULL;
+    enum sysdb_member_type member_type;
+    struct sysdb_attrs *member;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+    state = tevent_req_data(req,
+                            struct sdap_nested_group_lookup_external_state);
+
+    ret = state->ext_ctx->ext_member_resolve_recv(state, subreq,
+                                                  &member_type,
+                                                  &member);
+    talloc_free(subreq);
+    if (ret == EOK) {
+        state->ext_members[state->keyiter].ext_member_attr = \
+                            talloc_steal(state->ext_members,
+                                         state->keys[state->keyiter].str);
+        state->ext_members[state->keyiter].member_type = member_type;
+        state->ext_members[state->keyiter].attrs = \
+                            talloc_steal(state->ext_members, member);
+    }
+
+    state->keyiter++;
+    if (state->keyiter >= state->n_keys) {
+        /* All external members processed */
+        ret = sdap_nested_group_lookup_external_link(req);
+        if (ret != EOK) {
+            tevent_req_error(req, ret);
+            return;
+        }
+        tevent_req_done(req);
+        return;
+    }
+
+    ret = sdap_nested_group_lookup_external_step(req);
+    if (ret != EOK && ret != EAGAIN) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    return;
+}
+
+static errno_t
+sdap_nested_group_lookup_external_link(struct tevent_req *req)
+{
+    errno_t ret, tret;
+    bool in_transaction = false;
+    struct sdap_nested_group_lookup_external_state *state = NULL;
+    state = tevent_req_data(req,
+                            struct sdap_nested_group_lookup_external_state);
+
+    ret = sysdb_transaction_start(state->group_dom->sysdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to start transaction\n");
+        goto fail;
+    }
+    in_transaction = true;
+
+
+    for (size_t i = 0; i < talloc_array_length(state->ext_members); i++) {
+        ret = sdap_nested_group_lookup_external_link_member(
+                                                    &state->ext_members[i]);
+        if (ret != EOK) {
+            goto fail;
+        }
+    }
+
+    ret = sysdb_transaction_commit(state->group_dom->sysdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to commit transaction\n");
+        goto fail;
+    }
+    in_transaction = false;
+
+    return EOK;
+
+fail:
+    if (in_transaction) {
+        tret = sysdb_transaction_cancel(state->group_dom->sysdb);
+        if (tret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Failed to cancel transaction\n");
+        }
+    }
+    return EFAULT;
+}
+
+static errno_t
+sdap_nested_group_lookup_external_link_member(struct sdap_ext_member *member)
+{
+    const char *name;
+    int ret;
+
+    ret = sysdb_attrs_get_string(member->attrs, SYSDB_NAME, &name);
+    if (ret != EOK) {
+        return ret;
+    }
+
+#if 0
+    ret = sysdb_update_members_dn(member->dom, name, member->member_type,
+                                    (const char *const *) add_groups,
+                                    (const char *const *) del_groups);
+#endif
+
+    return 0;
+}
+
+errno_t
+sdap_nested_group_lookup_external_recv(TALLOC_CTX *mem_ctx,
+                                       struct tevent_req *req)
 {
     TEVENT_REQ_RETURN_ON_ERROR(req);
 
