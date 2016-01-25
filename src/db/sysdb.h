@@ -81,6 +81,7 @@
 #define SYSDB_USER_CATEGORY "userCategory"
 #define SYSDB_HOST_CATEGORY "hostCategory"
 #define SYSDB_GROUP_TYPE "groupType"
+#define SYSDB_EXTERNAL_MEMBER "externalMember"
 
 #define SYSDB_GECOS "gecos"
 #define SYSDB_LAST_LOGIN "lastLogin"
@@ -354,6 +355,8 @@ int sysdb_attrs_get_int32_t(struct sysdb_attrs *attrs, const char *name,
                              int32_t *value);
 int sysdb_attrs_get_uint32_t(struct sysdb_attrs *attrs, const char *name,
                              uint32_t *value);
+int sysdb_attrs_get_uint64_t(struct sysdb_attrs *attrs, const char *name,
+                             uint64_t *value);
 
 int sysdb_attrs_replace_name(struct sysdb_attrs *attrs, const char *oldname,
                                  const char *newname);
