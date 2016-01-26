@@ -538,8 +538,7 @@ static int sdap_save_group(TALLOC_CTX *memctx,
             goto done;
         }
     } else if (ret == ENOENT) {
-        DEBUG(SSSDBG_TRACE_ALL, "objectSID: not available for group [%s].\n",
-                                 group_name);
+        DEBUG(SSSDBG_TRACE_ALL, "objectSID: not available for group.\n");
         sid_str = NULL;
     } else {
         DEBUG(SSSDBG_MINOR_FAILURE, "Could not identify objectSID: [%s]\n",
