@@ -859,19 +859,25 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
         goto fail;
     }
 
+    group_attrs = sysdb_new_attrs(memctx);
+    if (group_attrs == NULL) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "sysdb_new_attrs failed\n");
+        ret = ENOMEM;
+        goto fail;
+    }
+
     if (el->num_values == 0 && nuserdns == 0) {
         DEBUG(SSSDBG_TRACE_FUNC,
               "No members for group [%s]\n", group_name);
+        ret = sysdb_attrs_get_el(group_attrs, SYSDB_MEMBER, &el);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE, "sysdb_attrs_get_el failed\n");
+            goto fail;
+        }
+
     } else {
         DEBUG(SSSDBG_TRACE_FUNC,
               "Adding member users to group [%s]\n", group_name);
-
-        group_attrs = sysdb_new_attrs(memctx);
-        if (!group_attrs) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "sysdb_new_attrs failed\n");
-            ret = ENOMEM;
-            goto fail;
-        }
 
         ret = sdap_fill_memberships(opts, group_attrs, ctx, group_dom, ghosts,
                                     el->values, el->num_values,
