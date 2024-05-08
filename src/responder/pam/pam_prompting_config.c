@@ -27,6 +27,8 @@
 
 #define DEFAULT_PASSKEY_PROMPT_INTERACTIVE _("Insert your Passkey device, then press ENTER.")
 #define DEFAULT_PASSKEY_PROMPT_TOUCH _("Please touch the device.")
+#define DEFAULT_EIDP_PROMPT_INIT _("Log In.")
+#define DEFAULT_EIDP_PROMPT_LINK _("Log in online with another device.")
 
 typedef errno_t (pam_set_prompting_fn_t)(TALLOC_CTX *, struct confdb_ctx *,
                                          const char *,
@@ -147,6 +149,36 @@ static errno_t pam_set_passkey_prompting_options(TALLOC_CTX *tmp_ctx,
 
     return ret;
 }
+
+static errno_t pam_set_eidp_prompting_options(TALLOC_CTX *tmp_ctx,
+                                              struct confdb_ctx *cdb,
+                                              const char *section,
+                                              struct prompt_config ***pc_list)
+{
+    char *init_prompt = NULL;
+    char *link_prompt = NULL;
+    int ret;
+
+    ret = confdb_get_string(cdb, tmp_ctx, section, CONFDB_PC_EIDP_INIT_PROMPT,
+                            DEFAULT_EIDP_PROMPT_INIT, &init_prompt);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "confdb_get_string failed, using defaults");
+    }
+
+    ret = confdb_get_string(cdb, tmp_ctx, section, CONFDB_PC_EIDP_LINK_PROMPT,
+                            DEFAULT_EIDP_PROMPT_LINK, &link_prompt);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "confdb_get_string failed, using defaults");
+    }
+
+    ret = pc_list_add_eidp(pc_list, init_prompt, link_prompt);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "pc_list_add_eidp failed.\n");
+    }
+
+    return ret;
+}
+
 static errno_t pam_set_prompting_options(struct confdb_ctx *cdb,
                                          const char *service_name,
                                          char **sections,
@@ -243,6 +275,20 @@ errno_t pam_eval_prompting_config(struct pam_ctx *pctx, struct pam_data *pd)
                   "pam_set_prompting_options failed.\n");
             goto done;
         }
+    }
+
+    /* There's no option to enable/disable EIdP in PAM config, thus prompt
+     * options are always checked. */
+    ret = pam_set_prompting_options(pctx->rctx->cdb, pd->service,
+                                    pctx->prompting_config_sections,
+                                    pctx->num_prompting_config_sections,
+                                    CONFDB_PC_TYPE_EIDP,
+                                    pam_set_eidp_prompting_options,
+                                    &pc_list);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "pam_set_prompting_options failed.\n");
+        goto done;
     }
 
     if (types.cert_auth) {

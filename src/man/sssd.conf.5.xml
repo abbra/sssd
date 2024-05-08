@@ -4629,6 +4629,32 @@ ldap_user_extra_attrs = phone:telephoneNumber
                 </listitem>
             </varlistentry>
         </variablelist>
+        <variablelist>
+            <varlistentry>
+                <term>[prompting/eidp]</term>
+                <listitem>
+                    <para>to configure External Identity Provider
+                    authentication prompting, allowed options are:
+                    <variablelist>
+                    <varlistentry>
+                        <term>init_prompt</term>
+                        <listitem>
+                            <para>to change the message of the initial prompt.
+                            </para>
+                        </listitem>
+                    </varlistentry>
+                    <varlistentry>
+                        <term>link_prompt</term>
+                        <listitem>
+                            <para>to change the message of the link prompt.
+                            </para>
+                        </listitem>
+                    </varlistentry>
+                    </variablelist>
+                    </para>
+                </listitem>
+            </varlistentry>
+        </variablelist>
         </para>
         <para>
             It is possible to add a subsection for specific PAM services,

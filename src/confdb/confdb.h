@@ -330,6 +330,9 @@
 #define CONFDB_PC_PASSKEY_INTERACTIVE_PROMPT "interactive_prompt"
 #define CONFDB_PC_PASSKEY_TOUCH "touch"
 #define CONFDB_PC_PASSKEY_TOUCH_PROMPT "touch_prompt"
+#define CONFDB_PC_TYPE_EIDP "eidp"
+#define CONFDB_PC_EIDP_INIT_PROMPT "init_prompt"
+#define CONFDB_PC_EIDP_LINK_PROMPT "link_prompt"
 
 struct confdb_ctx;
 
