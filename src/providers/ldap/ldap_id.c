@@ -229,7 +229,7 @@ struct tevent_req *users_get_send(TALLOC_CTX *memctx,
 
             ep_filter = get_enterprise_principal_string_filter(state,
                                    ctx->opts->user_map[SDAP_AT_USER_PRINC].name,
-                                   clean_value, ctx->opts->basic);
+                                   clean_value, ctx->opts->basic, match_rule_DEFAULT);
             /* TODO: Do we have to check the attribute names more carefully? */
             user_filter = talloc_asprintf(state, "(|(%s=%s)(%s=%s)%s)",
                                    ctx->opts->user_map[SDAP_AT_USER_PRINC].name,

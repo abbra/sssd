@@ -2813,7 +2813,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
 
             ep_filter = get_enterprise_principal_string_filter(state,
                                  state->opts->user_map[SDAP_AT_USER_PRINC].name,
-                                 clean_name, state->opts->basic);
+                                 clean_name, state->opts->basic, match_rule_DEFAULT);
             state->user_base_filter =
                     talloc_asprintf(state,
                                  "(&(|(%s=%s)(%s=%s)%s)(objectclass=%s)",

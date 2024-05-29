@@ -1338,19 +1338,19 @@ static void test_get_enterprise_principal_string_filter(void **state)
     ret = dp_opt_set_string(krb5_realm_opt, SDAP_KRB5_REALM, "TEST.DOM");
     assert_int_equal(ret, EOK);
 
-    ep_filter = get_enterprise_principal_string_filter(NULL, NULL, NULL, NULL);
+    ep_filter = get_enterprise_principal_string_filter(NULL, NULL, NULL, NULL, match_rule_DEFAULT);
     assert_null(ep_filter);
 
     ep_filter = get_enterprise_principal_string_filter(NULL, "aBC", "p@d.c",
-                                                       no_krb5_realm_opt);
+                                                       no_krb5_realm_opt, match_rule_DEFAULT);
     assert_null(ep_filter);
 
     ep_filter = get_enterprise_principal_string_filter(NULL, "aBC", "p",
-                                                       krb5_realm_opt);
+                                                       krb5_realm_opt, match_rule_DEFAULT);
     assert_null(ep_filter);
 
     ep_filter = get_enterprise_principal_string_filter(NULL, "aBC", "p@d.c",
-                                                       krb5_realm_opt);
+                                                       krb5_realm_opt, match_rule_DEFAULT);
     assert_non_null(ep_filter);
     assert_string_equal(ep_filter, "(aBC=p\\\\@d.c@TEST.DOM)");
     talloc_free(ep_filter);

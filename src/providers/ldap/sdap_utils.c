@@ -206,10 +206,18 @@ char *sdap_combine_filters(TALLOC_CTX *mem_ctx,
     return sdap_combine_filters_ex(mem_ctx, '&', base_filter, extra_filter);
 }
 
+static char *_principal_match_rule[] = [
+    "",
+    ":2.5.13.2", /* caseIgnoreMatch */
+    ":1.3.6.1.4.1.1466.109.114.1", /* caseExactIA5Match */
+    ":1.3.6.1.4.1.1466.109.114.2", /* caseIgnoreIA5Match */
+];
+
 char *get_enterprise_principal_string_filter(TALLOC_CTX *mem_ctx,
                                              const char *attr_name,
                                              const char *princ,
-                                             struct dp_option *sdap_basic_opts)
+                                             struct dp_option *sdap_basic_opts,
+                                             enum sdap_match_rule match_rule)
 {
     const char *realm;
     char *p;
@@ -228,7 +236,9 @@ char *get_enterprise_principal_string_filter(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    return talloc_asprintf(mem_ctx, "(%s=%.*s\\\\@%s@%s)", attr_name,
+    return talloc_asprintf(mem_ctx, "(%s%s=%.*s\\\\@%s@%s)", attr_name,
+                                    match_rule < sizeof(_principal_match_rule) ?
+                                    _match_rule[match_rule] : "",
                                                            (int) (p - princ),
                                                            princ,
                                                            p + 1, realm);

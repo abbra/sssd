@@ -388,10 +388,18 @@ char *sdap_combine_filters(TALLOC_CTX *mem_ctx,
                            const char *base_filter,
                            const char *extra_filter);
 
+enum sdap_match_rule {
+    match_rule_DEFAULT,
+    match_rule_CASE_IGNORE_MATCH,
+    match_rule_CASE_EXACT_IA5_MATCH,
+    match_rule_CASE_IGNORE_IA5_MATCH,
+};
+
 char *get_enterprise_principal_string_filter(TALLOC_CTX *mem_ctx,
                                              const char *attr_name,
                                              const char *princ,
-                                             struct dp_option *sdap_basic_opts);
+                                             struct dp_option *sdap_basic_opts,
+                                             enum sdap_match_rule match_rule);
 
 char *sdap_get_access_filter(TALLOC_CTX *mem_ctx,
                              const char *base_filter);
